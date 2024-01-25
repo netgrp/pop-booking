@@ -83,10 +83,14 @@ document.addEventListener("DOMContentLoaded", function () {
   calendar = new FullCalendar.Calendar(calendarEl, {
     initialView: "timeGridWeek",
     height: "100%",
+    selectable: true,
+    selectMirror: true,
+    weekNumbers: true,
+    select: calendarSelect,
     headerToolbar: {
-      left: 'prev,next',
+      left: '',
       center: 'title',
-      right: 'timeGridWeek,timeGridDay' // user can switch between the two
+      right: 'prev,next' // user can switch between the two
     },
     views: {
       timeGridWeek: {
@@ -103,11 +107,6 @@ document.addEventListener("DOMContentLoaded", function () {
           minute: '2-digit',
           omitZeroMinute: true,
         }
-      },
-      timeGridDay: {
-        type: 'timeGrid',
-        duration: { days: 1 },
-        buttonText: 'Day'
       }
     },
     firstDay: 1,
@@ -115,3 +114,24 @@ document.addEventListener("DOMContentLoaded", function () {
   });
   calendar.render();
 });
+
+async function calendarSelect(info) {
+  const { value: formValues } = await Swal.fire({
+    title: "Booking",
+    html: `
+      <select id="swal-select" class="swal2-select">
+        <option value="option1">Option 1</option>
+        <option value="option2">Option 2</option>
+        <option value="option3">Option 3</option>
+      </select>
+    `,
+    focusConfirm: false,
+    preConfirm: () => {
+      return document.getElementById("swal-select").value;
+    }
+  });
+  if (formValues) {
+    Swal.fire(formValues);
+  }
+  calendar.unselect()
+}
