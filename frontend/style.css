@@ -5,6 +5,11 @@
 body {
   font-family: Arial, sans-serif;
   background-color: #f2f2f2;
+  position: fixed;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  right: 0;
 }
 
 .container {
@@ -73,6 +78,11 @@ body {
   cursor: pointer;
 }
 
+.topnav p.active {
+  background-color: #777777;
+  color: white;
+}
+
 /* Create p right-aligned (split) link inside the navigation bar */
 .topnav p.split {
   float: right;
@@ -84,4 +94,13 @@ body {
 .topnav p:hover {
   background-color: #ddd;
   color: black;
+}
+
+.calendar-div {
+  padding: 10pt;
+  padding-bottom: 50pt;
+  background-color: #fff;
+}
+[hidden] {
+  display: none !important;
 }

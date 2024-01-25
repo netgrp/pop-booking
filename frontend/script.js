@@ -32,15 +32,86 @@ function updateForm() {
 function switchPages(toPage) {
   let messageDiv = document.getElementById("notices-div");
   let calendarDiv = document.getElementById("calendar-div");
+  let messageButton = document.getElementById("notices");
+  let calendarButton = document.getElementById("calendar");
 
   switch (toPage) {
     case "notices":
-      messageDiv.style.display = "block";
-      calendarDiv.style.display = "none";
+      messageDiv.removeAttribute("hidden");
+      messageButton.setAttribute("class", "active");
+      calendarDiv.setAttribute("hidden", "");
+      calendarButton.setAttribute("class", "");
       break;
     case "calendar":
-      messageDiv.style.display = "none";
-      calendarDiv.style.display = "block";
+      messageDiv.setAttribute("hidden", "");
+      messageButton.setAttribute("class", "");
+      calendarDiv.removeAttribute("hidden");
+      calendarButton.setAttribute("class", "active");
       break;
   }
 }
+
+function showLoginForm() {
+  Swal.fire({
+    title: 'Login Form',
+    html: `
+      <input type="text" id="username" class="swal2-input" placeholder="Username">
+      <input type="password" id="password" class="swal2-input" placeholder="Password">
+    `,
+    confirmButtonText: 'Sign in',
+    focusConfirm: false,
+    didOpen: () => {
+      const popup = Swal.getPopup()
+      usernameInput = popup.querySelector('#username')
+      passwordInput = popup.querySelector('#password')
+      usernameInput.onkeyup = (event) => event.key === 'Enter' && Swal.clickConfirm()
+      passwordInput.onkeyup = (event) => event.key === 'Enter' && Swal.clickConfirm()
+    },
+    preConfirm: () => {
+      const username = usernameInput.value
+      const password = passwordInput.value
+      if (!username || !password) {
+        Swal.showValidationMessage(`Please enter username and password`)
+      }
+      return { username, password }
+    },
+  })
+}
+
+document.addEventListener("DOMContentLoaded", function () {
+  var calendarEl = document.getElementById("calendar-div");
+  calendar = new FullCalendar.Calendar(calendarEl, {
+    initialView: "timeGridWeek",
+    height: "100%",
+    headerToolbar: {
+      left: 'prev,next',
+      center: 'title',
+      right: 'timeGridWeek,timeGridDay' // user can switch between the two
+    },
+    views: {
+      timeGridWeek: {
+        type: 'timeGrid',
+        allDaySlot: false,
+        slotDuration: '00:15:00',
+        slotLabelInterval: '01:00',
+        buttonText: 'Week',
+        nowIndicator: true,
+        scrollTime: '14:00:00',
+        slotLabelFormat: {
+          week: 'numeric',
+          hour: 'numeric',
+          minute: '2-digit',
+          omitZeroMinute: true,
+        }
+      },
+      timeGridDay: {
+        type: 'timeGrid',
+        duration: { days: 1 },
+        buttonText: 'Day'
+      }
+    },
+    firstDay: 1,
+    locale: "dk",
+  });
+  calendar.render();
+});
