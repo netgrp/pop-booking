@@ -8,12 +8,15 @@
     clippy::cargo
 )]
 
-use axum::{extract, http::StatusCode, routing::post, Router};
+use axum::debug_handler;
+use axum::{extract, extract::State, http::StatusCode, routing::post, Router};
+use backend::BookingApp;
 use serde::Deserialize;
-use std::fs::OpenOptions;
 use std::io::Write;
+use std::{fs::OpenOptions, sync::Arc};
 use tower_http::services::ServeDir;
 use tracing::{error, info};
+use tracing_subscriber::field::debug;
 
 #[derive(Deserialize)]
 struct NewBooking {
@@ -31,7 +34,7 @@ impl ToString for NewBooking {
     }
 }
 
-fn new_booking(payload: &NewBooking) -> Result<(), std::io::Error> {
+fn new_booking(payload: &NewBooking, app: &BookingApp) -> Result<(), std::io::Error> {
     // Create a new booking
     let booking = payload.to_string();
 
@@ -47,9 +50,13 @@ fn new_booking(payload: &NewBooking) -> Result<(), std::io::Error> {
     Ok(())
 }
 
+#[debug_handler]
 // Handle errors with a custom handler
-async fn handle_new_booking(extract::Json(payload): extract::Json<NewBooking>) -> StatusCode {
-    match new_booking(&payload) {
+async fn handle_new_booking(
+    State(app): State<Arc<BookingApp>>,
+    extract::Json(payload): extract::Json<NewBooking>,
+) -> StatusCode {
+    match new_booking(&payload, &app) {
         Ok(()) => StatusCode::OK,
         Err(e) => {
             error!("Error creating new booking: {}", e);
@@ -64,9 +71,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let frontend = ServeDir::new("../frontend");
 
+    let booking_app = Arc::new(BookingApp::from_config());
+
     // build our application with routes
     let app = Router::new()
         .route("/new_booking", post(handle_new_booking))
+        .with_state(booking_app)
         .nest_service("/", frontend);
 
     // run our app with hyper, listening globally on port 3000

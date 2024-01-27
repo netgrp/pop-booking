@@ -85,10 +85,11 @@ document.addEventListener("DOMContentLoaded", function () {
     height: "100%",
     selectable: true,
     selectMirror: true,
+    unselectAuto: false,
     weekNumbers: true,
     select: calendarSelect,
     headerToolbar: {
-      left: '',
+      left: 'today',
       center: 'title',
       right: 'prev,next' // user can switch between the two
     },
@@ -131,7 +132,21 @@ async function calendarSelect(info) {
     }
   });
   if (formValues) {
-    Swal.fire(formValues);
+    const Toast = Swal.mixin({
+      toast: true,
+      position: "bottom-end",
+      showConfirmButton: false,
+      timer: 3000,
+      timerProgressBar: true,
+      didOpen: (toast) => {
+        toast.onmouseenter = Swal.stopTimer;
+        toast.onmouseleave = Swal.resumeTimer;
+      }
+    });
+    Toast.fire({
+      icon: "success",
+      title: "Booking succesful"
+    });
   }
   calendar.unselect()
 }
