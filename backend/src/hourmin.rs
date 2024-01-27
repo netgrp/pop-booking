@@ -1,7 +1,19 @@
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 pub struct HourMin {
     hour: u8,
     min: u8,
+}
+
+impl<'de> Deserialize<'de> for HourMin {
+    fn deserialize<D>(deserializer: D) -> Result<HourMin, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        HourMin::try_from(s).map_err(serde::de::Error::custom)
+    }
 }
 
 impl TryFrom<&str> for HourMin {

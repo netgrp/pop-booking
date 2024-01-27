@@ -1,0 +1,57 @@
+{
+  "sauna": {
+    "name": "Sauna",
+    "description": "Sauna is a small room or building designed as a place to experience dry or wet heat sessions, or an establishment with one or more of these facilities. The steam and high heat make the bathers perspire. Infrared therapy is often referred to as a type of sauna, but according to the Finnish sauna organizations, infrared is not a sauna.",
+    "allowed_times": ["06:00", "02:00"]
+  },
+  "hottub": {
+    "name": "Hot tub",
+    "description": "A hot tub is a large tub or small pool full of water used for hydrotherapy, relaxation or pleasure. Some have powerful jets for massage purposes. Hot tubs are sometimes also known as spas or by the trade name Jacuzzi.",
+    "allowed_times": ["06:00", "02:00"]
+  },
+  "meetingroom": {
+    "name": "Meeting Room",
+    "description": "A meeting room is a room provided for singular events such as business conferences and meetings. It is commonly found at large hotels and convention centers though many other establishments, including even hospitals, have one. Designation of a meeting room is usually for a particular purpose, e.g., a boardroom, conference room, or lecture room.",
+    "allowed_times": ["06:00", "02:00"]
+  },
+  "canoe1": {
+    "name": "Canoe 1",
+    "description": "A canoe is a lightweight narrow boat, typically pointed at both ends and open on top, propelled by one or more seated or kneeling paddlers facing the direction of travel using a single-bladed paddle.",
+    "allowed_times": ["06:00", "02:00"]
+  },
+  "canoe2": {
+    "name": "Canoe 2",
+    "description": "A canoe is a lightweight narrow boat, typically pointed at both ends and open on top, propelled by one or more seated or kneeling paddlers facing the direction of travel using a single-bladed paddle.",
+    "allowed_times": ["06:00", "02:00"]
+  },
+  "canoe3": {
+    "name": "Canoe 3",
+    "description": "A canoe is a lightweight narrow boat, typically pointed at both ends and open on top, propelled by one or more seated or kneeling paddlers facing the direction of travel using a single-bladed paddle.",
+    "allowed_times": ["06:00", "02:00"]
+  },
+  "canoe4": {
+    "name": "Canoe 4",
+    "description": "A canoe is a lightweight narrow boat, typically pointed at both ends and open on top, propelled by one or more seated or kneeling paddlers facing the direction of travel using a single-bladed paddle.",
+    "allowed_times": ["06:00", "02:00"]
+  },
+  "kayak1": {
+    "name": "Kayak 1",
+    "description": "A kayak is a small, narrow watercraft which is propelled by means of a double-bladed paddle. The word kayak originates from the Greenlandic language, where it is the word qajaq (pronounced [qajaq]).",
+    "allowed_times": ["06:00", "02:00"]
+  },
+  "kayak2": {
+    "name": "Kayak 2",
+    "description": "A kayak is a small, narrow watercraft which is propelled by means of a double-bladed paddle. The word kayak originates from the Greenlandic language, where it is the word qajaq (pronounced [qajaq]).",
+    "allowed_times": ["06:00", "02:00"]
+  },
+  "kayak3": {
+    "name": "Kayak 3",
+    "description": "A kayak is a small, narrow watercraft which is propelled by means of a double-bladed paddle. The word kayak originates from the Greenlandic language, where it is the word qajaq (pronounced [qajaq]).",
+    "allowed_times": ["06:00", "02:00"]
+  },
+  "kayak4": {
+    "name": "Kayak 4",
+    "description": "A kayak is a small, narrow watercraft which is propelled by means of a double-bladed paddle. The word kayak originates from the Greenlandic language, where it is the word qajaq (pronounced [qajaq]).",
+    "allowed_times": ["06:00", "02:00"]
+  }
+}

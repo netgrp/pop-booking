@@ -9,9 +9,15 @@
 )]
 
 use axum::debug_handler;
-use axum::{extract, extract::State, http::StatusCode, routing::post, Router};
-use backend::api::NewBooking;
-use backend::BookingApp;
+use axum::{
+    extract,
+    extract::State,
+    http::StatusCode,
+    routing::{get, post},
+    Router,
+};
+use backend::authenticate::AuthApp;
+use backend::booker::{BookingApp, NewBooking};
 use std::env;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -21,10 +27,13 @@ use tracing::{error, info};
 #[debug_handler]
 // Handle errors with a custom handler
 async fn handle_new_booking(
-    State(app): State<Arc<RwLock<BookingApp>>>,
+    State(state): State<(Arc<RwLock<BookingApp>>, Arc<RwLock<AuthApp>>)>,
     extract::Json(payload): extract::Json<NewBooking>,
 ) -> StatusCode {
-    match app.write().await.handle_new_booking(payload) {
+    let (booker, auth) = state;
+    //assert login. This can also be done with middleware, but that is a bit more complicated
+
+    match booker.clone().write().await.handle_new_booking(payload) {
         Ok(()) => StatusCode::OK,
         Err(e) => {
             error!("Error creating new booking: {}", e);
@@ -32,6 +41,39 @@ async fn handle_new_booking(
         }
     }
 }
+
+async fn handle_resources(State(app): State<Arc<RwLock<BookingApp>>>) -> String {
+    match app.read().await.get_resources() {
+        Ok(resources) => resources,
+        Err(e) => {
+            error!("Error getting resources: {}", e);
+            "[]".to_string()
+        }
+    }
+}
+
+async fn handle_bookings(State(app): State<Arc<RwLock<BookingApp>>>) -> String {
+    match app.read().await.get_bookings() {
+        Ok(bookings) => bookings,
+        Err(e) => {
+            error!("Error getting bookings: {}", e);
+            "[]".to_string()
+        }
+    }
+}
+
+fn booking_api(book_app: Arc<RwLock<BookingApp>>, auth_app: Arc<RwLock<AuthApp>>) -> Router {
+    Router::new()
+        .route("/new_booking", post(handle_new_booking))
+        .with_state((book_app.clone(), auth_app))
+        .route("/bookings", get(handle_bookings))
+        .route("/resources", get(handle_resources))
+        .with_state(book_app)
+}
+
+// fn auth_api() -> Router {
+//     Router::new().route("/login", get(login))
+// }
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -41,14 +83,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let frontend = ServeDir::new(env::var("FRONTEND_DIR")?);
 
-    let booking_app = Arc::new(RwLock::new(BookingApp::from_config(env::var(
+    info!("Starting server");
+
+    let booking_app = Arc::new(RwLock::new(BookingApp::from_config(&env::var(
         "CONFIG_DIR",
-    )?)));
+    )?)?));
+
+    booking_app
+        .write()
+        .await
+        .load_bookings(&env::var("BOOKINGS_DIR")?)?;
+
+    let auth_app = Arc::new(RwLock::new(AuthApp::new()));
 
     // build our application with routes
     let app = Router::new()
-        .route("/new", post(handle_new_booking))
-        .with_state(booking_app)
+        .nest_service(
+            "/api/book/",
+            booking_api(booking_app, auth_app).into_service(),
+        )
+        // .nest_service("/api/", service)
         .nest_service("/", frontend);
 
     // run our app with hyper, listening globally on port 3000
