@@ -33,3 +33,17 @@ impl TryFrom<&str> for HourMin {
         Ok(Self { hour, min })
     }
 }
+
+impl TryFrom<String> for HourMin {
+    type Error = String;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        Self::try_from(value.as_str())
+    }
+}
+
+impl ToString for HourMin {
+    fn to_string(&self) -> String {
+        format!("{:02}:{:02}", self.hour, self.min)
+    }
+}

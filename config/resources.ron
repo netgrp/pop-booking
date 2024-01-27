@@ -1,0 +1,35 @@
+resources: {
+  "sauna": (
+    name: "Sauna",
+  ),
+  "hottub": (
+    name: "Hot tub",
+  ),
+  "meetingroom": (
+    name: "Meeting Room",
+  ),
+  "canoe1": (
+    name: "Canoe 1",
+  ),
+  "canoe2": (
+    name: "Canoe 2",
+  ),
+  "canoe3": (
+    name: "Canoe 3",
+  ),
+  "canoe4": (
+    name: "Canoe 4",
+  ),
+  "kayak1": (
+    name: "Kayak 1",
+  ),
+  "kayak2": (
+    name: "Kayak 2",
+  ),
+  "kayak3": (
+    name: "Kayak 3",
+  ),
+  "kayak4": (
+    name: "Kayak 4",
+  ),
+}

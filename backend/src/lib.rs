@@ -1,11 +1,16 @@
 use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
+pub mod api;
+use api::NewBooking;
 mod hourmin;
 use hourmin::HourMin;
+use tracing::info;
 
+#[derive(Debug, PartialEq, Eq, Hash, Clone)]
 struct User {
     name: String,
     email: String,
+    room: String,
 }
 
 struct SessionToken {
@@ -13,7 +18,7 @@ struct SessionToken {
     expiry: u64,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 struct Resource {
     name: String,
     description: String,
@@ -45,9 +50,11 @@ impl Hash for Resource {
     }
 }
 
+#[derive(Debug)]
 struct Booking {
     user: User,
     resource: Resource,
+    times: [HourMin; 2],
 }
 
 pub struct BookingApp {
@@ -56,8 +63,8 @@ pub struct BookingApp {
     resources: HashSet<Resource>,
 }
 
-impl<'a> BookingApp {
-    pub fn from_config() -> Self {
+impl BookingApp {
+    pub fn from_config(config_dir: String) -> Self {
         Self {
             sessions: HashMap::new(),
             bookings: Vec::new(),
@@ -65,8 +72,33 @@ impl<'a> BookingApp {
         }
     }
 
-    pub fn new_booking(&mut self, user: User, resource_name: &str, times: [HourMin; 2]) {
-        let resource = self.resources.get(&Resource::empty(resource_name));
-        todo!()
+    pub fn handle_new_booking(&mut self, booking: NewBooking) -> Result<(), String> {
+        let user = User {
+            name: booking.name.clone(),
+            email: booking.email.clone(),
+            room: booking.room.clone(),
+        };
+
+        let resource = self
+            .resources
+            .get(&Resource::empty(&booking.resource_name))
+            .ok_or("Resource not found")?
+            .clone();
+
+        let times = [booking.start_time.try_into()?, booking.end_time.try_into()?];
+        self.add_booking(Booking {
+            user,
+            resource,
+            times,
+        })
+    }
+
+    fn add_booking(&mut self, booking: Booking) -> Result<(), String> {
+        // if self.bookings.contains(&booking) {
+        //     return Err("Booking already exists".to_string());
+        // }
+        info!("Adding booking: {:?}", booking);
+        self.bookings.push(booking);
+        Ok(())
     }
 }

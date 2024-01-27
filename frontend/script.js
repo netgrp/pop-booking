@@ -11,12 +11,15 @@ function sendPostRequest(url, data) {
 function updateForm() {
   const form = document.getElementById("form");
   const data = {
-    name: form.name.value,
-    email: form.email.value,
-    message: form.message.value,
+    name: "John Doe",
+    email: "John@Doe.com",
+    room: 42,
+    resource_name: form.resource_name.value,
+    start_time: form.start_time.value,
+    end_time: form.end_time.value,
   };
   console.log(data);
-  sendPostRequest("/new_booking", data)
+  sendPostRequest("/new", data)
     .then((response) => {
       if (response.status === 200) {
         alert("Message sent!");
