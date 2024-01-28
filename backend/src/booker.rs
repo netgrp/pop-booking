@@ -74,27 +74,45 @@ impl BookingApp {
         let bookings_content = std::fs::read_to_string(bookings_path)?;
         self.bookings = serde_json::from_str(&bookings_content)?;
 
+        //build bookings json
+        self.cached_resource_json = Some(self.get_event_json().unwrap());
+
         Ok(())
     }
 
     pub fn get_resources(&self) -> Result<String, serde_json::Error> {
-        serde_json::to_string_pretty(&self.resources)
+        serde_json::to_string(&self.resources)
     }
 
     // https://fullcalendar.io/docs/event-parsing
-    pub fn get_bookings(&self) -> String {
+    pub fn get_bookings(&self) -> Result<String, serde_json::Error> {
         if let Some(cached_string) = &self.cached_resource_json {
-            return cached_string.clone();
+            return Ok(cached_string.clone());
         }
 
-        //rebuild cache
+        self.get_event_json()
+    }
+
+    fn get_event_json(&self) -> Result<String, serde_json::Error> {
+        // Rebuild cache
+        #[derive(Serialize)]
         struct Event {
             title: String,
             start: String,
             end: String,
         }
 
-        todo!()
+        let bookings_json = self
+            .bookings
+            .iter()
+            .map(|booking| Event {
+                title: booking.user.name.clone(),
+                start: booking.times[0].to_rfc3339(),
+                end: booking.times[1].to_rfc3339(),
+            })
+            .collect::<Vec<Event>>();
+
+        serde_json::to_string(&bookings_json)
     }
 
     pub fn handle_new_booking(&mut self, booking: NewBooking) -> Result<(), String> {
@@ -136,8 +154,9 @@ impl BookingApp {
         info!("Adding booking: {:?}", booking);
         self.bookings.push(booking);
 
-        //invalidate cache
-        self.cached_resource_json = None;
+        //build bookings json
+        self.cached_resource_json = Some(self.get_event_json().unwrap());
+
         Ok(())
     }
 }
