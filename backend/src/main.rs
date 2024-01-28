@@ -13,8 +13,9 @@ use axum::{
     extract,
     extract::State,
     http::StatusCode,
+    response::IntoResponse,
     routing::{get, post},
-    Router,
+    Json, Router,
 };
 use backend::authenticate::AuthApp;
 use backend::booker::{BookingApp, NewBooking};
@@ -27,22 +28,24 @@ use tracing::{error, info};
 #[debug_handler]
 // Handle errors with a custom handler
 async fn handle_new_booking(
-    State(state): State<(Arc<RwLock<BookingApp>>, Arc<RwLock<AuthApp>>)>,
+    State((booker, _auth)): State<(Arc<RwLock<BookingApp>>, Arc<RwLock<AuthApp>>)>,
     extract::Json(payload): extract::Json<NewBooking>,
-) -> StatusCode {
-    let (booker, auth) = state;
+) -> impl IntoResponse {
     //assert login. This can also be done with middleware, but that is a bit more complicated
+    info!("Handling new booking: {:?}", payload);
 
     match booker.clone().write().await.handle_new_booking(payload) {
-        Ok(()) => StatusCode::OK,
+        Ok(()) => (StatusCode::OK, "Booking created".to_string()),
         Err(e) => {
             error!("Error creating new booking: {}", e);
-            StatusCode::INTERNAL_SERVER_ERROR
+            (StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
         }
     }
 }
 
-async fn handle_resources(State(app): State<Arc<RwLock<BookingApp>>>) -> String {
+async fn handle_resources(
+    State((app, _)): State<(Arc<RwLock<BookingApp>>, Arc<RwLock<AuthApp>>)>,
+) -> String {
     match app.read().await.get_resources() {
         Ok(resources) => resources,
         Err(e) => {
@@ -52,7 +55,9 @@ async fn handle_resources(State(app): State<Arc<RwLock<BookingApp>>>) -> String 
     }
 }
 
-async fn handle_bookings(State(app): State<Arc<RwLock<BookingApp>>>) -> String {
+async fn handle_bookings(
+    State((app, _)): State<(Arc<RwLock<BookingApp>>, Arc<RwLock<AuthApp>>)>,
+) -> String {
     match app.read().await.get_bookings() {
         Ok(bookings) => bookings,
         Err(e) => {
@@ -64,11 +69,10 @@ async fn handle_bookings(State(app): State<Arc<RwLock<BookingApp>>>) -> String {
 
 fn booking_api(book_app: Arc<RwLock<BookingApp>>, auth_app: Arc<RwLock<AuthApp>>) -> Router {
     Router::new()
-        .route("/new_booking", post(handle_new_booking))
-        .with_state((book_app.clone(), auth_app))
-        .route("/bookings", get(handle_bookings))
+        .route("/new", post(handle_new_booking))
+        .route("/events", get(handle_bookings))
         .route("/resources", get(handle_resources))
-        .with_state(book_app)
+        .with_state((book_app, auth_app))
 }
 
 // fn auth_api() -> Router {

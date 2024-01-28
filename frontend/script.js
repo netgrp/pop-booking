@@ -1,4 +1,7 @@
 function sendPostRequest(url, data) {
+  console.log("Sending POST request to " + url);
+  console.log(data);
+  console.log(JSON.stringify(data));
   return fetch(url, {
     method: "POST",
     body: JSON.stringify(data),
@@ -8,29 +11,6 @@ function sendPostRequest(url, data) {
   });
 }
 
-function updateForm() {
-  const form = document.getElementById("form");
-  const data = {
-    name: "John Doe",
-    email: "John@Doe.com",
-    room: 42,
-    resource_name: form.resource_name.value,
-    start_time: form.start_time.value,
-    end_time: form.end_time.value,
-  };
-  console.log(data);
-  sendPostRequest("/new", data)
-    .then((response) => {
-      if (response.status === 200) {
-        alert("Message sent!");
-      } else {
-        alert("Something went wrong...");
-      }
-    })
-    .catch((error) => {
-      console.error("Error:", error);
-    });
-}
 
 function switchPages(toPage) {
   let messageDiv = document.getElementById("notices-div");
@@ -85,6 +65,7 @@ document.addEventListener("DOMContentLoaded", function () {
   var calendarEl = document.getElementById("calendar-div");
   calendar = new FullCalendar.Calendar(calendarEl, {
     initialView: "timeGridWeek",
+    events: '/api/book/events',
     height: "100%",
     selectable: true,
     selectMirror: true,
@@ -120,21 +101,26 @@ document.addEventListener("DOMContentLoaded", function () {
 });
 
 async function calendarSelect(info) {
-  const { value: formValues } = await Swal.fire({
-    title: "Booking",
-    html: `
-      <select id="swal-select" class="swal2-select">
-        <option value="option1">Option 1</option>
-        <option value="option2">Option 2</option>
-        <option value="option3">Option 3</option>
-      </select>
-    `,
-    focusConfirm: false,
-    preConfirm: () => {
-      return document.getElementById("swal-select").value;
-    }
-  });
-  if (formValues) {
+  return new Promise((resolve, reject) => {
+    // fill in the form with information of the resources
+    let dropdown = document.getElementById("resources-dropdown");
+    getResources().then((resources) => {
+      resources.sort();
+      resources.forEach((resource) => {
+        let option = document.createElement("option");
+        option.value = resource[0];
+        option.innerHTML = resource[1];
+        dropdown.appendChild(option);
+      });
+    })
+
+    let start = document.getElementById("booking-start");
+    let end = document.getElementById("booking-end");
+    start.value = info.startStr.slice(0, -6);
+    end.value = info.endStr.slice(0, -6);
+
+    let dialog = document.getElementById("create-booking-dialog");
+    dialog.showModal();
     const Toast = Swal.mixin({
       toast: true,
       position: "bottom-end",
@@ -146,10 +132,85 @@ async function calendarSelect(info) {
         toast.onmouseleave = Swal.resumeTimer;
       }
     });
-    Toast.fire({
-      icon: "success",
-      title: "Booking succesful"
-    });
+    document.getElementById("create-booking-button").onclick = async () => {
+      dialog.close();
+      try {
+        const response = await sendPostRequest("/api/book/new", {
+          start_time: rfc3339(start.value),
+          end_time: rfc3339(end.value),
+          resource_name: dropdown.value,
+        });
+
+        if (response.status === 200) {
+          // Handle the successful response here
+
+          Toast.fire({
+            icon: "success",
+            title: "Booking successful"
+          });
+          calendar.refetchEvents();
+          calendar.unselect();
+          resolve();
+        } else {
+          const errorText = await response.text();
+          Toast.fire({
+            icon: "error",
+            title: "Booking failed: " + errorText
+          });
+          calendar.unselect();
+          resolve();
+        }
+      } catch (error) {
+        Toast.fire({
+          icon: "error",
+          title: "Booking failed"
+        });
+        calendar.unselect();
+        resolve();
+      }
+    };
+    document.getElementById("cancel-booking-button").onclick = () => {
+      calendar.unselect();
+      dialog.close();
+      resolve();
+    }
+  });
+}
+
+async function getResources() {
+  const response = await fetch('api/book/resources');
+  const resources = await response.json();
+  // console.log(resources);
+  // return a list of resource name strings
+  let resourceNames = [];
+  for (const [key, value] of Object.entries(resources)) {
+    // console.log(key, value);
+    resourceNames.push([key, value.name]);
   }
-  calendar.unselect()
+  return resourceNames;
+}
+
+function rfc3339(d) {
+  var d = new Date(d);
+  function pad(n) {
+    return n < 10 ? "0" + n : n;
+  }
+
+  function timezoneOffset(offset) {
+    var sign;
+    if (offset === 0) {
+      return "Z";
+    }
+    sign = (offset > 0) ? "-" : "+";
+    offset = Math.abs(offset);
+    return sign + pad(Math.floor(offset / 60)) + ":" + pad(offset % 60);
+  }
+
+  return d.getFullYear() + "-" +
+    pad(d.getMonth() + 1) + "-" +
+    pad(d.getDate()) + "T" +
+    pad(d.getHours()) + ":" +
+    pad(d.getMinutes()) + ":" +
+    pad(d.getSeconds()) +
+    timezoneOffset(d.getTimezoneOffset());
 }

@@ -1,3 +1,6 @@
+use core::fmt;
+
+use chrono::{DateTime, Local, Timelike, Utc};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
@@ -54,8 +57,20 @@ impl TryFrom<String> for HourMin {
     }
 }
 
-impl ToString for HourMin {
-    fn to_string(&self) -> String {
-        format!("{:02}:{:02}", self.hour, self.min)
+//Sadly I have to assume local timezone here
+impl From<DateTime<Utc>> for HourMin {
+    fn from(dt: DateTime<Utc>) -> Self {
+        //convert to local time
+        let dt = dt.with_timezone(&Local);
+        Self {
+            hour: dt.hour() as u8,
+            min: dt.minute() as u8,
+        }
+    }
+}
+
+impl fmt::Display for HourMin {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{:02}:{:02}", self.hour, self.min)
     }
 }

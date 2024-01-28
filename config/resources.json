@@ -7,7 +7,7 @@
   "hottub": {
     "name": "Hot tub",
     "description": "A hot tub is a large tub or small pool full of water used for hydrotherapy, relaxation or pleasure. Some have powerful jets for massage purposes. Hot tubs are sometimes also known as spas or by the trade name Jacuzzi.",
-    "allowed_times": ["06:00", "02:00"]
+    "allowed_times": ["08:00", "02:00"]
   },
   "meetingroom": {
     "name": "Meeting Room",

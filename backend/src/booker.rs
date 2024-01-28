@@ -1,16 +1,15 @@
 use crate::hourmin::HourMin;
 use chrono::{DateTime, Utc};
+use core::time;
 use serde::{Deserialize, Serialize};
 use serde_json;
 use std::collections::HashMap;
+use std::env;
 use std::hash::{Hash, Hasher};
 use tracing::info;
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 pub struct NewBooking {
-    pub name: String,
-    pub email: String,
-    pub room: u8,
     pub resource_name: String,
     pub start_time: String,
     pub end_time: String,
@@ -106,7 +105,10 @@ impl BookingApp {
             .bookings
             .iter()
             .map(|booking| Event {
-                title: booking.user.name.clone(),
+                title: format!(
+                    "Room {}, {}",
+                    booking.user.room, self.resources[&booking.resource_name].name
+                ),
                 start: booking.times[0].to_rfc3339(),
                 end: booking.times[1].to_rfc3339(),
             })
@@ -117,9 +119,9 @@ impl BookingApp {
 
     pub fn handle_new_booking(&mut self, booking: NewBooking) -> Result<(), String> {
         let user = User {
-            name: booking.name.clone(),
-            email: booking.email.clone(),
-            room: booking.room.clone(),
+            name: "John Doe".to_string(), //TODO: get from auth
+            email: "John@doe.com".to_string(),
+            room: 42,
         };
 
         //Assert that the resource exists
@@ -130,6 +132,9 @@ impl BookingApp {
             ));
         }
 
+        //Assert that the booking is within the allowed times
+        let allowed_times = self.resources[&booking.resource_name].allowed_times;
+
         //https://xkcd.com/1179/
         let times = [
             DateTime::parse_from_rfc3339(&booking.start_time)
@@ -139,6 +144,39 @@ impl BookingApp {
                 .map_err(|e| format!("Error parsing end time: {}", e))?
                 .with_timezone(&Utc),
         ];
+
+        if times[0] < Utc::now() {
+            return Err("Start time is in the past".to_string());
+        }
+
+        if times[0] > times[1] {
+            return Err("Start time is after end time".to_string());
+        }
+
+        let inrange = |time: DateTime<Utc>| {
+            info!("times: {:?}", HourMin::from(times[0]));
+            HourMin::from(time) >= std::cmp::min(allowed_times[0], allowed_times[1])
+                && HourMin::from(time) <= std::cmp::max(allowed_times[0], allowed_times[1])
+        };
+
+        let order = allowed_times[0] > allowed_times[1];
+        if order == inrange(times[0]) && order == inrange(times[1]) {
+            return Err(format!(
+                "Booking outside allowed times: {} - {}",
+                allowed_times[0], allowed_times[1]
+            ));
+        }
+
+        //check if it overlaps with any other bookings
+        // TODO: implement data structure that allows for fast lookup of overlapping bookings
+        // I want to use a BTreeMap for this, that would be O(nlogn)
+        for booking in &self.bookings {
+            if booking.resource_name == booking.resource_name {
+                if times[0] < booking.times[1] && times[1] > booking.times[0] {
+                    return Err(format!("Booking overlaps with existing booking"));
+                }
+            }
+        }
 
         self.add_booking(Booking {
             user,
@@ -156,6 +194,16 @@ impl BookingApp {
 
         //build bookings json
         self.cached_resource_json = Some(self.get_event_json().unwrap());
+
+        //save to file
+        let bookings_path = format!(
+            "{}/bookings.json",
+            env::var("BOOKINGS_DIR").map_err(|e| format!("Error getting bookings dir: {}", e))?
+        );
+        info!("Saving bookings to: {}", bookings_path);
+
+        let bookings_content = serde_json::to_string(&self.bookings).unwrap();
+        std::fs::write(bookings_path, bookings_content).unwrap();
 
         Ok(())
     }
