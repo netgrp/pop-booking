@@ -12,6 +12,8 @@ function sendPostRequest(url, data) {
 }
 
 
+
+
 function switchPages(toPage) {
   let messageDiv = document.getElementById("notices-div");
   let calendarDiv = document.getElementById("calendar-div");
@@ -35,30 +37,36 @@ function switchPages(toPage) {
 }
 
 function showLoginForm() {
-  Swal.fire({
-    title: 'Login Form',
-    html: `
-      <input type="text" id="username" class="swal2-input" placeholder="Username">
-      <input type="password" id="password" class="swal2-input" placeholder="Password">
-    `,
-    confirmButtonText: 'Sign in',
-    focusConfirm: false,
-    didOpen: () => {
-      const popup = Swal.getPopup()
-      usernameInput = popup.querySelector('#username')
-      passwordInput = popup.querySelector('#password')
-      usernameInput.onkeyup = (event) => event.key === 'Enter' && Swal.clickConfirm()
-      passwordInput.onkeyup = (event) => event.key === 'Enter' && Swal.clickConfirm()
-    },
-    preConfirm: () => {
-      const username = usernameInput.value
-      const password = passwordInput.value
-      if (!username || !password) {
-        Swal.showValidationMessage(`Please enter username and password`)
+  let dialog = document.getElementById("login-dialog");
+  dialog.showModal();
+
+  document.getElementById("login-button").onclick = async () => {
+    dialog.close();
+    try {
+      const response = await sendPostRequest("/api/login", {
+        username: document.getElementById("username").value,
+        password: document.getElementById("password").value,
+      });
+
+      if (response.status === 200) {
+        // Handle the successful response here
+        window.location.reload();
+      } else {
+        const errorText = await response.text();
+        Swal.fire({
+          icon: "error",
+          title: "Login failed",
+          text: errorText,
+        });
       }
-      return { username, password }
-    },
-  })
+    } catch (error) {
+      Swal.fire({
+        icon: "error",
+        title: "Login failed",
+        text: "Something went wrong",
+      });
+    }
+  }
 }
 
 document.addEventListener("DOMContentLoaded", function () {
@@ -132,6 +140,10 @@ async function calendarSelect(info) {
         toast.onmouseleave = Swal.resumeTimer;
       }
     });
+    dialog.addEventListener("close", (event) => {
+      calendar.refetchEvents();
+      calendar.unselect();
+    });
     document.getElementById("create-booking-button").onclick = async () => {
       dialog.close();
       try {
@@ -148,8 +160,6 @@ async function calendarSelect(info) {
             icon: "success",
             title: "Booking successful"
           });
-          calendar.refetchEvents();
-          calendar.unselect();
           resolve();
         } else {
           const errorText = await response.text();
@@ -157,7 +167,6 @@ async function calendarSelect(info) {
             icon: "error",
             title: "Booking failed: " + errorText
           });
-          calendar.unselect();
           resolve();
         }
       } catch (error) {
@@ -165,12 +174,10 @@ async function calendarSelect(info) {
           icon: "error",
           title: "Booking failed"
         });
-        calendar.unselect();
         resolve();
       }
     };
     document.getElementById("cancel-booking-button").onclick = () => {
-      calendar.unselect();
       dialog.close();
       resolve();
     }

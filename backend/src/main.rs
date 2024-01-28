@@ -15,7 +15,8 @@ use axum::{
     http::StatusCode,
     response::IntoResponse,
     routing::{get, post},
-    Json, Router,
+    // Json,
+    Router,
 };
 use backend::authenticate::AuthApp;
 use backend::booker::{BookingApp, NewBooking};
@@ -32,13 +33,12 @@ async fn handle_new_booking(
     extract::Json(payload): extract::Json<NewBooking>,
 ) -> impl IntoResponse {
     //assert login. This can also be done with middleware, but that is a bit more complicated
-    info!("Handling new booking: {:?}", payload);
 
-    match booker.clone().write().await.handle_new_booking(payload) {
+    match booker.write().await.handle_new_booking(payload) {
         Ok(()) => (StatusCode::OK, "Booking created".to_string()),
         Err(e) => {
             error!("Error creating new booking: {}", e);
-            (StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
+            (StatusCode::INTERNAL_SERVER_ERROR, e)
         }
     }
 }

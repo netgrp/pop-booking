@@ -1,6 +1,5 @@
 use crate::hourmin::HourMin;
 use chrono::{DateTime, Utc};
-use core::time;
 use serde::{Deserialize, Serialize};
 use serde_json;
 use std::collections::HashMap;
@@ -27,6 +26,7 @@ struct Resource {
     name: String,
     description: String,
     allowed_times: [HourMin; 2],
+    color: String,
 }
 
 // Hashing only by name, must be unique
@@ -60,7 +60,7 @@ impl BookingApp {
 
         Ok(Self {
             bookings: Vec::new(),
-            resources: resources,
+            resources,
             cached_resource_json: None,
         })
     }
@@ -99,6 +99,7 @@ impl BookingApp {
             title: String,
             start: String,
             end: String,
+            color: String,
         }
 
         let bookings_json = self
@@ -111,6 +112,7 @@ impl BookingApp {
                 ),
                 start: booking.times[0].to_rfc3339(),
                 end: booking.times[1].to_rfc3339(),
+                color: self.resources[&booking.resource_name].color.clone(),
             })
             .collect::<Vec<Event>>();
 
@@ -154,7 +156,6 @@ impl BookingApp {
         }
 
         let inrange = |time: DateTime<Utc>| {
-            info!("times: {:?}", HourMin::from(times[0]));
             HourMin::from(time) >= std::cmp::min(allowed_times[0], allowed_times[1])
                 && HourMin::from(time) <= std::cmp::max(allowed_times[0], allowed_times[1])
         };
@@ -170,12 +171,18 @@ impl BookingApp {
         //check if it overlaps with any other bookings
         // TODO: implement data structure that allows for fast lookup of overlapping bookings
         // I want to use a BTreeMap for this, that would be O(nlogn)
-        for booking in &self.bookings {
-            if booking.resource_name == booking.resource_name {
-                if times[0] < booking.times[1] && times[1] > booking.times[0] {
-                    return Err(format!("Booking overlaps with existing booking"));
-                }
-            }
+        if self
+            .bookings
+            .iter()
+            .filter(|existing_booking| {
+                (booking.resource_name == existing_booking.resource_name)
+                    && (times[0] < existing_booking.times[1]
+                        && times[1] > existing_booking.times[0])
+            })
+            .count()
+            > 0
+        {
+            return Err("Booking overlaps with another booking".to_string());
         }
 
         self.add_booking(Booking {
