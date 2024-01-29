@@ -89,6 +89,12 @@ impl BookingApp {
         let bookings_path = format!("{bookings_dir}/bookings.json");
         info!("Loading bookings from: {}", bookings_path);
 
+        //check if file exists
+        if !std::path::Path::new(&bookings_path).exists() {
+            info!("Bookings file does not exist, creating empty file");
+            std::fs::write(&bookings_path, "[]")?;
+        }
+
         let bookings_content = std::fs::read_to_string(bookings_path)?;
         self.bookings = serde_json::from_str(&bookings_content)?;
 
