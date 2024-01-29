@@ -57,6 +57,34 @@ impl TryFrom<String> for HourMin {
     }
 }
 
+impl HourMin {
+    pub fn now() -> Self {
+        Self::from(Utc::now())
+    }
+
+    pub fn hour(&self) -> u8 {
+        self.hour
+    }
+
+    pub fn min(&self) -> u8 {
+        self.min
+    }
+
+    pub fn to_minutes(&self) -> i32 {
+        self.hour as i32 * 60 + self.min as i32
+    }
+
+    pub fn from_minutes(minutes: u32) -> Self {
+        //roll over if minutes > 24h
+        let minutes = minutes % (24 * 60);
+
+        Self {
+            hour: (minutes / 60) as u8,
+            min: (minutes % 60) as u8,
+        }
+    }
+}
+
 //Sadly I have to assume local timezone here
 impl From<DateTime<Utc>> for HourMin {
     fn from(dt: DateTime<Utc>) -> Self {

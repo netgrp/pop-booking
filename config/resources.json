@@ -3,66 +3,77 @@
     "name": "Sauna",
     "description": "",
     "allowed_times": ["06:00", "02:00"],
+    "max_duration": "02:00",
     "color": "#8b4513"
   },
   "hottub": {
     "name": "Hot tub",
     "description": "",
     "allowed_times": ["08:00", "02:00"],
+    "max_duration": "02:00",
     "color": "#008000"
   },
   "meetingroom": {
     "name": "Meeting Room",
     "description": "",
     "allowed_times": ["06:00", "02:00"],
+    "max_duration": "02:00",
     "color": "#4682b4"
   },
   "canoe1": {
     "name": "Canoe 1",
     "description": "",
     "allowed_times": ["06:00", "02:00"],
+    "max_duration": "24:00",
     "color": "#000080"
   },
   "canoe2": {
     "name": "Canoe 2",
     "description": "",
     "allowed_times": ["06:00", "02:00"],
+    "max_duration": "02:00",
     "color": "#ff0000"
   },
   "canoe3": {
     "name": "Canoe 3",
     "description": "",
     "allowed_times": ["06:00", "02:00"],
+    "max_duration": "02:00",
     "color": "#ffff00"
   },
   "canoe4": {
     "name": "Canoe 4",
     "description": "",
     "allowed_times": ["06:00", "02:00"],
+    "max_duration": "02:00",
     "color": "#00ff00"
   },
   "kayak1": {
     "name": "Kayak 1",
     "description": "",
     "allowed_times": ["06:00", "02:00"],
+    "max_duration": "02:00",
     "color": "#00ffff"
   },
   "kayak2": {
     "name": "Kayak 2",
     "description": "",
     "allowed_times": ["06:00", "02:00"],
+    "max_duration": "02:00",
     "color": "#ff00ff"
   },
   "kayak3": {
     "name": "Kayak 3",
     "description": "",
     "allowed_times": ["06:00", "02:00"],
+    "max_duration": "02:00",
     "color": "#eee8aa"
   },
   "kayak4": {
     "name": "Kayak 4",
     "description": "",
     "allowed_times": ["06:00", "02:00"],
+    "max_duration": "02:00",
     "color": "#ff69b4"
   }
 }

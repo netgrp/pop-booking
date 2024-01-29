@@ -154,12 +154,12 @@ async function calendarSelect(info) {
         });
 
         if (response.status === 200) {
-          // Handle the successful response here
-
           Toast.fire({
             icon: "success",
             title: "Booking successful"
           });
+
+          console.log("Booking successful");
           resolve();
         } else {
           const errorText = await response.text();

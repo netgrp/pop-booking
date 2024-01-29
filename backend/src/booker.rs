@@ -26,7 +26,26 @@ struct Resource {
     name: String,
     description: String,
     allowed_times: [HourMin; 2],
+    #[serde(deserialize_with = "minutes_from_str")]
+    max_duration: u32, //in minutes
     color: String,
+}
+
+fn minutes_from_str<'de, D>(deserializer: D) -> Result<u32, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let s = String::deserialize(deserializer)?;
+    let parts = s.split(':').collect::<Vec<&str>>();
+    if parts.len() != 2 {
+        return Err(serde::de::Error::custom(format!(
+            "Expected format: HH:MM, got: {}",
+            s
+        )));
+    }
+    let hours = parts[0].parse::<u32>().map_err(serde::de::Error::custom)?;
+    let minutes = parts[1].parse::<u32>().map_err(serde::de::Error::custom)?;
+    Ok(hours * 60 + minutes)
 }
 
 // Hashing only by name, must be unique
@@ -127,12 +146,10 @@ impl BookingApp {
         };
 
         //Assert that the resource exists
-        if !self.resources.contains_key(&booking.resource_name) {
-            return Err(format!(
-                "Resource does not exist: {}",
-                booking.resource_name
-            ));
-        }
+        let resource = self
+            .resources
+            .get(&booking.resource_name)
+            .ok_or_else(|| format!("Resource {} does not exist", booking.resource_name.clone()))?;
 
         //Assert that the booking is within the allowed times
         let allowed_times = self.resources[&booking.resource_name].allowed_times;
@@ -155,15 +172,39 @@ impl BookingApp {
             return Err("Start time is after end time".to_string());
         }
 
-        let inrange = |time: DateTime<Utc>| {
-            HourMin::from(time) >= std::cmp::min(allowed_times[0], allowed_times[1])
-                && HourMin::from(time) <= std::cmp::max(allowed_times[0], allowed_times[1])
+        let inrange = |time: DateTime<Utc>, range: [HourMin; 2]| {
+            HourMin::from(time) >= std::cmp::min(range[0], range[1])
+                && HourMin::from(time) <= std::cmp::max(range[0], range[1])
         };
 
         let order = allowed_times[0] > allowed_times[1];
-        if order == inrange(times[0]) && order == inrange(times[1]) {
+        let duration = (times[1] - times[0]).num_minutes() as u32;
+
+        if duration > resource.max_duration {
+            return Err(format!(
+                "Booking duration is longer than allowed: {} > {}",
+                duration, resource.max_duration
+            ));
+        }
+
+        if order == inrange(times[0], allowed_times) && order == inrange(times[1], allowed_times) {
             return Err(format!(
                 "Booking outside allowed times: {} - {}",
+                allowed_times[0], allowed_times[1]
+            ));
+        }
+
+        //Check that the booking is within the allowed times again, but different, hard to explain
+        let legal_duration = std::cmp::min(
+            resource.max_duration,
+            (allowed_times[1].to_minutes() - HourMin::from(times[0]).to_minutes()).rem_euclid(1440)
+                as u32,
+        );
+
+        //last check to see whether the booking crosses an illegal time
+        if legal_duration < duration {
+            return Err(format!(
+                "Booking outside allowed times {} - {}",
                 allowed_times[0], allowed_times[1]
             ));
         }

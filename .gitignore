@@ -1,2 +1,3 @@
 backend/bookings.txt
 frontend/.prettierrc
+db/bookings.json
