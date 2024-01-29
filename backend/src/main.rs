@@ -25,6 +25,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tower_http::services::ServeDir;
 use tracing::{error, info};
+use tracing_subscriber::filter::EnvFilter;
 
 #[debug_handler]
 // Handle errors with a custom handler
@@ -81,7 +82,10 @@ fn booking_api(book_app: Arc<RwLock<BookingApp>>, auth_app: Arc<RwLock<AuthApp>>
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    tracing_subscriber::fmt::init();
+    tracing_subscriber::fmt()
+        .with_target(false)
+        .with_env_filter(EnvFilter::from_default_env())
+        .init();
 
     dotenvy::dotenv()?;
 

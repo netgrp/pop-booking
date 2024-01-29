@@ -5,7 +5,7 @@ use serde_json;
 use std::collections::HashMap;
 use std::env;
 use std::hash::{Hash, Hasher};
-use tracing::info;
+use tracing::{debug, info};
 
 #[derive(Debug, Deserialize)]
 pub struct NewBooking {
@@ -151,16 +151,14 @@ impl BookingApp {
             room: 42,
         };
 
-        //Assert that the resource exists
+        // Assert that the resource exists
         let resource = self
             .resources
             .get(&booking.resource_name)
             .ok_or_else(|| format!("Resource {} does not exist", booking.resource_name.clone()))?;
 
-        //Assert that the booking is within the allowed times
-        let allowed_times = self.resources[&booking.resource_name].allowed_times;
-
-        //https://xkcd.com/1179/
+        // Assert that the booking is within the allowed times
+        let allowed_times = resource.allowed_times;
         let times = [
             DateTime::parse_from_rfc3339(&booking.start_time)
                 .map_err(|e| format!("Error parsing start time: {}", e))?
@@ -178,36 +176,34 @@ impl BookingApp {
             return Err("Start time is after end time".to_string());
         }
 
-        let inrange = |time: DateTime<Utc>, range: [HourMin; 2]| {
-            HourMin::from(time) >= std::cmp::min(range[0], range[1])
-                && HourMin::from(time) <= std::cmp::max(range[0], range[1])
-        };
-
-        let order = allowed_times[0] > allowed_times[1];
         let duration = (times[1] - times[0]).num_minutes() as u32;
 
         if duration > resource.max_duration {
             return Err(format!(
                 "Booking duration is longer than allowed: {} > {}",
-                duration, resource.max_duration
+                HourMin::from_minutes(duration),
+                HourMin::from_minutes(resource.max_duration)
             ));
         }
 
-        if order == inrange(times[0], allowed_times) && order == inrange(times[1], allowed_times) {
+        let to_start = (allowed_times[1].to_minutes() - HourMin::from(times[0]).to_minutes())
+            .rem_euclid(1440) as u32;
+        let to_end = (allowed_times[0].to_minutes() - HourMin::from(times[1]).to_minutes())
+            .rem_euclid(1440) as u32;
+
+        debug!("To start: {}", to_start);
+        debug!("To end: {}", to_end);
+
+        if to_end < to_start {
             return Err(format!(
                 "Booking outside allowed times: {} - {}",
                 allowed_times[0], allowed_times[1]
             ));
         }
 
-        //Check that the booking is within the allowed times again, but different, hard to explain
-        let legal_duration = std::cmp::min(
-            resource.max_duration,
-            (allowed_times[1].to_minutes() - HourMin::from(times[0]).to_minutes()).rem_euclid(1440)
-                as u32,
-        );
+        let legal_duration = std::cmp::min(resource.max_duration, to_start);
 
-        //last check to see whether the booking crosses an illegal time
+        debug!("Legal duration: {}", legal_duration);
         if legal_duration < duration {
             return Err(format!(
                 "Booking outside allowed times {} - {}",
@@ -215,20 +211,11 @@ impl BookingApp {
             ));
         }
 
-        //check if it overlaps with any other bookings
-        // TODO: implement data structure that allows for fast lookup of overlapping bookings
-        // I want to use a BTreeMap for this, that would be O(nlogn)
-        if self
-            .bookings
-            .iter()
-            .filter(|existing_booking| {
-                (booking.resource_name == existing_booking.resource_name)
-                    && (times[0] < existing_booking.times[1]
-                        && times[1] > existing_booking.times[0])
-            })
-            .count()
-            > 0
-        {
+        if self.bookings.iter().any(|existing_booking| {
+            booking.resource_name == existing_booking.resource_name
+                && times[0] < existing_booking.times[1]
+                && times[1] > existing_booking.times[0]
+        }) {
             return Err("Booking overlaps with another booking".to_string());
         }
 
@@ -243,7 +230,7 @@ impl BookingApp {
         // if self.bookings.contains(&booking) {
         //     return Err("Booking already exists".to_string());
         // }
-        info!("Adding booking: {:?}", booking);
+        debug!("Adding booking: {:?}", booking);
         self.bookings.push(booking);
 
         //build bookings json
