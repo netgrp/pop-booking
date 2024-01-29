@@ -8,23 +8,34 @@
     clippy::cargo
 )]
 
-use axum::debug_handler;
+use anyhow::Result;
 use axum::{
-    extract,
-    extract::State,
+    debug_handler,
+    extract::{self, Json, Request, State},
     http::StatusCode,
-    response::IntoResponse,
+    middleware::{self, Next},
+    response::{IntoResponse, Response},
     routing::{get, post},
-    // Json,
     Router,
 };
-use backend::authenticate::AuthApp;
-use backend::booker::{BookingApp, NewBooking};
+use axum_extra::extract::cookie::{Cookie, CookieJar};
+use backend::{
+    authenticate::SessionToken,
+    booker::{BookingApp, NewBooking},
+};
+use backend::{
+    authenticate::{AuthApp, TokenId},
+    booker::User,
+};
 use std::env;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::RwLock;
 use tower_http::services::ServeDir;
-use tracing::{error, info};
+use tower_http::{
+    catch_panic::CatchPanicLayer, compression::CompressionLayer, timeout::TimeoutLayer,
+};
+use tracing::{debug, error, info};
 use tracing_subscriber::filter::EnvFilter;
 
 #[debug_handler]
@@ -76,12 +87,73 @@ fn booking_api(book_app: Arc<RwLock<BookingApp>>, auth_app: Arc<RwLock<AuthApp>>
         .with_state((book_app, auth_app))
 }
 
-// fn auth_api() -> Router {
-//     Router::new().route("/login", get(login))
-// }
+#[debug_handler]
+async fn hande_login(
+    State(auth_app): State<Arc<RwLock<AuthApp>>>,
+    cookies: CookieJar,
+    Json(payload): Json<backend::authenticate::LoginPayload>,
+) -> Result<(StatusCode, CookieJar, Json<SessionToken>), StatusCode> {
+    match auth_app
+        .write()
+        .await
+        .authenticate_user(&payload.username, &payload.password)
+        .await
+    {
+        Ok((cookie, session_token)) => {
+            debug!("login succesful");
+            debug!("Adding cookie: {}", cookie);
+
+            Ok((
+                StatusCode::OK,
+                cookies.add(Cookie::parse(cookie).unwrap()),
+                Json(session_token),
+            ))
+        }
+        Err(e) => {
+            debug!("Error logging in: {}", e);
+            Err(StatusCode::INTERNAL_SERVER_ERROR)
+        }
+    }
+}
+
+fn auth_api(auth_app: Arc<RwLock<AuthApp>>) -> Router {
+    Router::new()
+        .route("/login", post(hande_login))
+        .with_state(auth_app)
+}
+
+async fn cookie_helper(
+    cookies: CookieJar,
+    auth_app: Arc<RwLock<AuthApp>>,
+) -> Result<CookieJar, Box<dyn std::error::Error>> {
+    let cookie = cookies.get("SESSION-COOKIE").ok_or("No cookie found")?;
+    let token_id = TokenId::try_from(cookie.value())?;
+    let cookie = auth_app
+        .write()
+        .await
+        .update_token(&token_id)
+        .map_err(|e| format!("Error updating token: {}", e))?;
+
+    Ok(cookies.add(Cookie::parse(cookie).unwrap()))
+}
+
+async fn update_token(
+    State(auth_app): State<Arc<RwLock<AuthApp>>>,
+    cookies: CookieJar,
+    request: Request,
+    next: Next,
+) -> (CookieJar, Response) {
+    (
+        cookie_helper(cookies, auth_app).await.unwrap_or_else(|e| {
+            debug!("Error updating token: {}", e);
+            CookieJar::new()
+        }),
+        next.run(request).await,
+    )
+}
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_target(false)
         .with_env_filter(EnvFilter::from_default_env())
@@ -93,25 +165,36 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     info!("Starting server");
 
-    let booking_app = Arc::new(RwLock::new(BookingApp::from_config(&env::var(
+    let book_app = Arc::new(RwLock::new(BookingApp::from_config(&env::var(
         "CONFIG_DIR",
     )?)?));
 
-    booking_app
+    book_app
         .write()
         .await
         .load_bookings(&env::var("BOOKINGS_DIR")?)?;
 
-    let auth_app = Arc::new(RwLock::new(AuthApp::new()));
+    let auth_app = Arc::new(RwLock::new(AuthApp::new()?));
+
+    let middleware = tower::ServiceBuilder::new()
+        .layer(CompressionLayer::new().quality(tower_http::CompressionLevel::Fastest))
+        .layer(TimeoutLayer::new(Duration::from_secs(30)))
+        .layer(CatchPanicLayer::new())
+        .layer(middleware::from_fn_with_state(
+            auth_app.clone(),
+            update_token,
+        ));
 
     // build our application with routes
     let app = Router::new()
         .nest_service(
             "/api/book/",
-            booking_api(booking_app, auth_app).into_service(),
+            booking_api(book_app, auth_app.clone()).into_service(),
         )
-        // .nest_service("/api/", service)
-        .nest_service("/", frontend);
+        .nest_service("/api/", auth_api(auth_app.clone()).into_service())
+        .nest_service("/", frontend)
+        .layer(middleware)
+        .with_state(auth_app.clone());
 
     // run our app with hyper, listening globally on port 3000
     let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{}", env::var("PORT")?)).await?;

@@ -11,8 +11,14 @@
   --leading: 0.025em;
 }
 
+@font-face {
+  font-family: "roboto";
+  src: url("/external/Roboto/Roboto-Regular.ttf") format("truetype");
+}
+
 body {
   background-color: #f2f2f2;
+  font-family: "roboto", sans-serif;
   position: fixed;
   top: 0;
   bottom: 0;

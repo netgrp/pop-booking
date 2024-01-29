@@ -1,4 +1,5 @@
 use crate::hourmin::HourMin;
+use anyhow::{anyhow, Result};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json;
@@ -15,10 +16,15 @@ pub struct NewBooking {
 }
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Serialize, Deserialize)]
-struct User {
-    name: String,
-    email: String,
+pub struct User {
+    username: String,
     room: u8,
+}
+
+impl User {
+    pub fn new(username: String, room: u8) -> Self {
+        Self { username, room }
+    }
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
@@ -69,7 +75,7 @@ pub struct BookingApp {
 }
 
 impl BookingApp {
-    pub fn from_config(config_dir: &str) -> Result<Self, Box<dyn std::error::Error>> {
+    pub fn from_config(config_dir: &str) -> Result<Self> {
         //load using serde_json
         let resources_path = format!("{config_dir}/resources.json");
         info!("Loading resources from: {}", resources_path);
@@ -84,7 +90,7 @@ impl BookingApp {
         })
     }
 
-    pub fn load_bookings(&mut self, bookings_dir: &str) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn load_bookings(&mut self, bookings_dir: &str) -> Result<()> {
         //load bookings from file
         let bookings_path = format!("{bookings_dir}/bookings.json");
         info!("Loading bookings from: {}", bookings_path);
@@ -96,7 +102,8 @@ impl BookingApp {
         }
 
         let bookings_content = std::fs::read_to_string(bookings_path)?;
-        self.bookings = serde_json::from_str(&bookings_content)?;
+        self.bookings = serde_json::from_str(&bookings_content)
+            .map_err(|e| anyhow!("Loading of bookings failed: {}", e))?;
 
         //build bookings json
         self.cached_resource_json = Some(self.get_event_json().unwrap());
@@ -146,8 +153,7 @@ impl BookingApp {
 
     pub fn handle_new_booking(&mut self, booking: NewBooking) -> Result<(), String> {
         let user = User {
-            name: "John Doe".to_string(), //TODO: get from auth
-            email: "John@doe.com".to_string(),
+            username: "John Doe".to_string(), //TODO: get from auth
             room: 42,
         };
 
@@ -243,7 +249,7 @@ impl BookingApp {
         );
         info!("Saving bookings to: {}", bookings_path);
 
-        let bookings_content = serde_json::to_string(&self.bookings).unwrap();
+        let bookings_content = serde_json::to_string_pretty(&self.bookings).unwrap();
         std::fs::write(bookings_path, bookings_content).unwrap();
 
         Ok(())
