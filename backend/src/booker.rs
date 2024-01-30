@@ -7,6 +7,7 @@ use serde_json;
 use std::collections::HashMap;
 use std::env;
 use std::hash::{Hash, Hasher};
+use std::ops::Index;
 use tracing::{debug, info};
 
 #[derive(Debug, Deserialize)]
@@ -14,6 +15,11 @@ pub struct NewBooking {
     pub resource_name: String,
     pub start_time: String,
     pub end_time: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct DeletePayload {
+    pub id: String,
 }
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Serialize, Deserialize)]
@@ -62,7 +68,7 @@ impl Hash for Resource {
     }
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, PartialEq, Eq)]
 struct Booking {
     user: User,
     resource_name: String,
@@ -70,7 +76,7 @@ struct Booking {
 }
 
 pub struct BookingApp {
-    bookings: Vec<Booking>,
+    bookings: HashMap<u32, Booking>,
     resources: HashMap<String, Resource>,
     cached_resource_json: Option<String>,
 }
@@ -85,7 +91,7 @@ impl BookingApp {
         let resources: HashMap<String, Resource> = serde_json::from_str(&resources_content)?;
 
         Ok(Self {
-            bookings: Vec::new(),
+            bookings: HashMap::new(),
             resources,
             cached_resource_json: None,
         })
@@ -99,7 +105,7 @@ impl BookingApp {
         //check if file exists
         if !std::path::Path::new(&bookings_path).exists() {
             info!("Bookings file does not exist, creating empty file");
-            std::fs::write(&bookings_path, "[]")?;
+            std::fs::write(&bookings_path, "{}")?;
         }
 
         let bookings_content = std::fs::read_to_string(bookings_path)?;
@@ -113,7 +119,7 @@ impl BookingApp {
     }
 
     pub fn get_resources(&self) -> Result<String, serde_json::Error> {
-        serde_json::to_string(&self.resources)
+        serde_json::to_string_pretty(&self.resources)
     }
 
     // https://fullcalendar.io/docs/event-parsing
@@ -130,21 +136,25 @@ impl BookingApp {
         #[derive(Serialize)]
         struct Event {
             title: String,
+            id: String,
             start: String,
             end: String,
+            owner: String,
             color: String,
         }
 
         let bookings_json = self
             .bookings
             .iter()
-            .map(|booking| Event {
+            .map(|(id, booking)| Event {
                 title: format!(
                     "Room {}, {}",
                     booking.user.room, self.resources[&booking.resource_name].name
                 ),
+                id: id.to_string(),
                 start: booking.times[0].to_rfc3339(),
                 end: booking.times[1].to_rfc3339(),
+                owner: booking.user.username.clone(),
                 color: self.resources[&booking.resource_name].color.clone(),
             })
             .collect::<Vec<Event>>();
@@ -156,7 +166,7 @@ impl BookingApp {
         &mut self,
         booking: NewBooking,
         session: SessionToken,
-    ) -> Result<(), String> {
+    ) -> Result<String, String> {
         // Assert that the resource exists
         let resource = self
             .resources
@@ -184,6 +194,8 @@ impl BookingApp {
 
         let duration = (times[1] - times[0]).num_minutes() as u32;
 
+        debug!("Duration: {}", duration);
+        debug!("Max duration: {}", resource.max_duration);
         if duration > resource.max_duration {
             return Err(format!(
                 "Booking duration is longer than allowed: {} > {}",
@@ -217,7 +229,7 @@ impl BookingApp {
             ));
         }
 
-        if self.bookings.iter().any(|existing_booking| {
+        if self.bookings.iter().any(|(_, existing_booking)| {
             booking.resource_name == existing_booking.resource_name
                 && times[0] < existing_booking.times[1]
                 && times[1] > existing_booking.times[0]
@@ -225,19 +237,55 @@ impl BookingApp {
             return Err("Booking overlaps with another booking".to_string());
         }
 
-        self.add_booking(Booking {
-            user: session.get_user().to_owned(),
-            resource_name: booking.resource_name,
-            times,
-        })
+        let id = rand::random();
+
+        //check that id is unique
+
+        self.add_booking(
+            &id,
+            Booking {
+                user: session.get_user().to_owned(),
+                resource_name: booking.resource_name,
+                times,
+            },
+        )?;
+        Ok(id.to_string())
     }
 
-    fn add_booking(&mut self, booking: Booking) -> Result<(), String> {
+    pub fn handle_delete(&mut self, payload: DeletePayload) -> Result<(), String> {
+        let id = payload
+            .id
+            .parse::<u32>()
+            .map_err(|e| format!("Error parsing id: {}", e))?;
+
+        if !self.bookings.contains_key(&id) {
+            return Err("Booking does not exist".to_string());
+        }
+
+        self.bookings.remove(&id);
+
+        //build bookings json
+        self.cached_resource_json = Some(self.get_event_json().unwrap());
+
+        //save to file
+        let bookings_path = format!(
+            "{}/bookings.json",
+            env::var("BOOKINGS_DIR").map_err(|e| format!("Error getting bookings dir: {}", e))?
+        );
+        info!("Saving bookings to: {}", bookings_path);
+
+        let bookings_content = serde_json::to_string_pretty(&self.bookings).unwrap();
+        std::fs::write(bookings_path, bookings_content).unwrap();
+
+        Ok(())
+    }
+
+    fn add_booking(&mut self, id: &u32, booking: Booking) -> Result<(), String> {
         // if self.bookings.contains(&booking) {
         //     return Err("Booking already exists".to_string());
         // }
         debug!("Adding booking: {:?}", booking);
-        self.bookings.push(booking);
+        self.bookings.insert(*id, booking);
 
         //build bookings json
         self.cached_resource_json = Some(self.get_event_json().unwrap());

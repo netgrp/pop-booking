@@ -24,7 +24,7 @@
     "name": "Canoe 1",
     "description": "",
     "allowed_times": ["06:00", "02:00"],
-    "max_duration": "24:00",
+    "max_duration": "02:00",
     "color": "#000080"
   },
   "canoe2": {

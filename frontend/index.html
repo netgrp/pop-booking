@@ -71,11 +71,11 @@
       <h1>Login</h1>
       <div>
         <label for="username">Username</label>
-        <input type="text" id="username" />
+        <input class="text" type="text" id="username" />
       </div>
       <div>
         <label for="password">Password</label>
-        <input type="password" id="password" />
+        <input class="text" type="password" id="password" />
       </div>
       <small id="login-error" hidden>Invalid username or password</small>
       <a href="https://reset.k-net.dk/" target="_blank">Forgot password?</a>
@@ -86,7 +86,24 @@
     </form>
   </dialog>
 
-
+  <dialog id="delete-booking-dialog">
+    <form method="dialog">
+      <h2 id="delete-booking-header"></h2>
+      <div>
+        <label for="change-booking-start">Start</label>
+        <input class="disabled" type="datetime-local" id="change-booking-start" disabled />
+      </div>
+      <div>
+        <label for="change-booking-end">End</label>
+        <input class="disabled" type="datetime-local" id="change-booking-end" disabled />
+      </div>
+      <menu>
+        <!-- <button id="change-booking-button" type="button">Change</button> -->
+        <button class="delete" id="delete-booking-button" type="button">Delete</button>
+        <button id="cancel-change-booking-button" type="button">Cancel</button>
+      </menu>
+    </form>
+  </dialog>
 
 
 </body>

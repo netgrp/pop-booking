@@ -12,22 +12,18 @@ use anyhow::Result;
 use axum::{
     debug_handler,
     extract::{self, Json, Request, State},
-    http::{response, StatusCode},
+    http::StatusCode,
     middleware::{self, Next},
-    response::{IntoResponse, Response},
+    response::Response,
     routing::{get, post},
     Router,
 };
 use axum_extra::extract::cookie::{Cookie, CookieJar};
+use backend::authenticate::{AuthApp, TokenId};
 use backend::{
     authenticate::SessionToken,
-    booker::{BookingApp, NewBooking},
+    booker::{BookingApp, DeletePayload, NewBooking},
 };
-use backend::{
-    authenticate::{AuthApp, TokenId},
-    booker::User,
-};
-use serde::de;
 use std::env;
 use std::sync::Arc;
 use std::time::Duration;
@@ -36,7 +32,7 @@ use tower_http::services::ServeDir;
 use tower_http::{
     catch_panic::CatchPanicLayer, compression::CompressionLayer, timeout::TimeoutLayer,
 };
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, trace};
 use tracing_subscriber::{field::debug, filter::EnvFilter};
 
 #[debug_handler]
@@ -53,9 +49,30 @@ async fn handle_new_booking(
         .map_err(|e| (StatusCode::UNAUTHORIZED, e))?;
 
     match booker.write().await.handle_new_booking(payload, session) {
-        Ok(()) => Ok((StatusCode::OK, "Booking created".to_string())),
+        Ok(id) => Ok((StatusCode::OK, id)),
         Err(e) => {
             error!("Error creating new booking: {}", e);
+            Err((StatusCode::INTERNAL_SERVER_ERROR, e))
+        }
+    }
+}
+
+async fn handle_delete(
+    State((booker, auth)): State<(Arc<RwLock<BookingApp>>, Arc<RwLock<AuthApp>>)>,
+    cookies: CookieJar,
+    extract::Json(payload): extract::Json<DeletePayload>,
+) -> Result<(StatusCode, String), (StatusCode, String)> {
+    debug!("Deleting booking: {:?}", payload);
+    //assert login. This can also be done with middleware, but that is a bit more complicated
+    auth.read()
+        .await
+        .assert_login(cookies)
+        .map_err(|e| (StatusCode::UNAUTHORIZED, e))?;
+
+    match booker.write().await.handle_delete(payload) {
+        Ok(()) => Ok((StatusCode::OK, "Booking deleted".to_string())),
+        Err(e) => {
+            error!("Error deleting booking: {}", e);
             Err((StatusCode::INTERNAL_SERVER_ERROR, e))
         }
     }
@@ -90,6 +107,7 @@ fn booking_api(book_app: Arc<RwLock<BookingApp>>, auth_app: Arc<RwLock<AuthApp>>
         .route("/new", post(handle_new_booking))
         .route("/events", get(handle_bookings))
         .route("/resources", get(handle_resources))
+        .route("/delete", post(handle_delete))
         .with_state((book_app, auth_app))
 }
 
@@ -129,7 +147,7 @@ async fn check_login(
         .read()
         .await
         .assert_login(cookies)
-        .map_err(|e| StatusCode::OK)?;
+        .map_err(|_| StatusCode::OK)?;
 
     Ok((StatusCode::ACCEPTED, Json(session_token)))
 }
@@ -190,7 +208,7 @@ async fn update_token(
     request: Request,
     next: Next,
 ) -> (CookieJar, Response) {
-    debug!("{}, {}", request.method(), request.uri().path());
+    trace!("{}, {}", request.method(), request.uri().path());
     let response = next.run(request).await;
     (
         cookie_helper(cookies, auth_app)

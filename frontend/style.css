@@ -193,6 +193,11 @@ dialog button {
   transition: all 0.15s ease-in-out;
 }
 
+dialog button.delete {
+  background-color: #ff3860;
+  color: white;
+}
+
 dialog button:hover {
   transform: translateY(-1px);
   box-shadow: 0 7px 14px 0 rgba(50, 50, 93, 0.1),
@@ -228,6 +233,10 @@ input {
   text-decoration: none;
 }
 
+dialog input.disabled {
+  cursor: default;
+}
+
 dialog div {
   display: flex;
   flex-direction: row;
@@ -249,37 +258,8 @@ dialog div input {
   border-radius: 5px;
 }
 
-dialog button.cta {
-  background-color: var(--cta-color);
-  color: white;
-}
-
-dialog button.cta:focus {
-  box-shadow: 0 0 0 0.125rem #fff, 0 0 0 0.2rem var(--cta-color);
-}
-
-dialog button.cta:hover {
-  background-color: #46a049;
-}
-
-dialog button.cta:active {
-  background-color: #46a049;
-}
-
-dialog button.cta:disabled {
-  background-color: #46a049;
-}
-
-dialog button.cta:disabled:hover {
-  background-color: #46a049;
-}
-
-dialog button.cta:disabled:active {
-  background-color: #46a049;
-}
-
-dialog button.cta:disabled:focus {
-  box-shadow: 0 0 0 0.125rem #fff, 0 0 0 0.2rem var(--cta-color);
+dialog div input.text {
+  width: 300pt;
 }
 
 [hidden] {

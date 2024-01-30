@@ -93,6 +93,7 @@ async function showLoginForm() {
           document.getElementById("login").innerHTML = "Logout";
           document.getElementById("login").onclick = logout;
           logged_in = true;
+          username = data.user.username;
           resolve(true)
         } else {
           const errorText = await response.text();
@@ -152,7 +153,7 @@ document.addEventListener("DOMContentLoaded", function () {
     headerToolbar: {
       left: 'today',
       center: 'title',
-      right: 'prev,next' // user can switch between the two
+      right: 'timeGridWeek,timeGridDay,prev,next'
     },
     views: {
       timeGridWeek: {
@@ -169,7 +170,21 @@ document.addEventListener("DOMContentLoaded", function () {
           minute: '2-digit',
           omitZeroMinute: true,
         }
-      }
+      },
+      timeGridDay: {
+        type: 'timeGrid',
+        allDaySlot: false,
+        slotDuration: '00:15:00',
+        slotLabelInterval: '01:00',
+        buttonText: 'Day',
+        nowIndicator: true,
+        scrollTime: '14:00:00',
+        slotLabelFormat: {
+          hour: 'numeric',
+          minute: '2-digit',
+          omitZeroMinute: true,
+        }
+      },
     },
     firstDay: 1,
     locale: "dk",
@@ -196,6 +211,7 @@ async function newBooking(info) {
     let dropdown = document.getElementById("resources-dropdown");
     getResources().then((resources) => {
       resources.sort();
+      dropdown.innerHTML = "";
       resources.forEach((resource) => {
         let option = document.createElement("option");
         option.value = resource[0];
@@ -231,7 +247,6 @@ async function newBooking(info) {
         });
 
         console.log("Booking successful");
-        resolve();
       } else if (response.status === 401) {
         const errorText = await response.text();
         Toast.fire({
@@ -240,8 +255,16 @@ async function newBooking(info) {
           text: "You need to log in first",
           // text: errorText,
         });
-        resolve();
       }
+      else {
+        const errorText = await response.text();
+        Toast.fire({
+          icon: "error",
+          title: "Booking failed",
+          text: errorText,
+        })
+      }
+      resolve();
     }
     document.getElementById("cancel-booking-button").onclick = () => {
       dialog.close();
@@ -257,6 +280,7 @@ async function check_login() {
     document.getElementById("name-plate").innerHTML = "Room " + data.user.room;
     document.getElementById("login").innerHTML = "Logout";
     document.getElementById("login").onclick = logout;
+    username = data.user.username;
     logged_in = true;
   } else if (response.status === 200) { // 200 means not logged in
     document.getElementById("login").onclick = showLoginForm;
@@ -267,10 +291,91 @@ async function check_login() {
 }
 
 async function handle_event_click(info) {
-  console.log(info);
+  new Promise((resolve, reject) => {
+
+    //First check that the event is owned by the user
+    if (info.event.extendedProps.owner != username) {
+      document.getElementById("delete-booking-button").setAttribute("hidden", "");
+    } else {
+      document.getElementById("delete-booking-button").removeAttribute("hidden");
+    }
+
+
+    let dialog = document.getElementById("delete-booking-dialog");
+    document.getElementById("delete-booking-header").innerHTML = info.event.title;
+    document.getElementById("change-booking-start").value = info.event.startStr.slice(0, -6);
+    document.getElementById("change-booking-end").value = info.event.endStr.slice(0, -6);
+    dialog.showModal();
+
+    // document.getElementById("change-booking-button").onclick = async () => {
+    //   dialog.close();
+    //   const response = await sendPostRequest("/api/book/change", {
+    //     start_time: rfc3339(info.event.start),
+    //     end_time: rfc3339(info.event.end),
+    //     resource_name: info.event.resource_name,
+    //     booking_id: info.event.id,
+    //   });
+
+    //   if (response.status === 200) {
+    //     Toast.fire({
+    //       icon: "success",
+    //       title: "Booking changed"
+    //     });
+
+    //     console.log("Booking changed");
+    //     resolve();
+    //   } else if (response.status === 401) {
+    //     const errorText = await response.text();
+    //     Toast.fire({
+    //       icon: "error",
+    //       title: "Booking failed",
+    //       text: "You need to log in first",
+    //       // text: errorText,
+    //     });
+    //     resolve();
+    //   }
+    // }
+
+    document.getElementById("cancel-change-booking-button").onclick = () => {
+      dialog.close();
+      resolve();
+    }
+
+    document.getElementById("delete-booking-button").onclick = async () => {
+      dialog.close();
+      const response = await sendPostRequest("/api/book/delete", {
+        id: info.event.id,
+      });
+
+      if (response.status === 200) {
+        Toast.fire({
+          icon: "success",
+          title: "Booking deleted"
+        });
+
+        console.log("Booking deleted");
+        calendar.refetchEvents();
+        resolve();
+      } else if (response.status === 401) {
+        const errorText = await response.text();
+        Toast.fire({
+          icon: "error",
+          title: "Booking failed",
+          text: "You need to log in first",
+          // text: errorText,
+        });
+        resolve();
+      }
+    }
+
+    dialog.addEventListener("close", (event) => {
+      document.getElementById("cancel-change-booking-button").click();
+    })
+  })
 }
 
 var logged_in = false;
+var username = "";
 document.onload = check_login();
 setInterval(async function () {
   await check_login();

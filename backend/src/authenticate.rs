@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use sha1::{Digest, Sha1};
 use std::collections::HashMap;
 use std::env;
-use tracing::{debug, field::debug, info};
+use tracing::{debug, info, trace};
 
 use crate::booker::User;
 
@@ -131,7 +131,7 @@ impl AuthApp {
     }
 
     fn gen_cookie(token: &TokenId) -> String {
-        debug!("Generating cookie with token: {}", token.to_string());
+        trace!("Generating cookie with token: {}", token.to_string());
         Cookie::build(("SESSION-COOKIE", token.to_string()))
             .expires(None)
             .same_site(cookie::SameSite::Strict)
@@ -163,7 +163,7 @@ impl AuthApp {
             .get("SESSION-COOKIE")
             .ok_or("No cookie found")
             .map_err(|e| {
-                debug!("cookie not found: {}", e);
+                trace!("cookie not found: {}", e);
                 "Not logged in"
             })?
             .value()
@@ -171,19 +171,19 @@ impl AuthApp {
 
         let token_id = TokenId::try_from(cookie)?;
 
-        debug!("Checking token: {}", token_id.to_string());
+        trace!("Checking token: {}", token_id.to_string());
         self.tokens
             .get(&token_id)
             .ok_or("Not logged in")
             .map_err(|e| {
-                debug!("token not found: {}", e);
+                trace!("token not found: {}", e);
                 "Not logged in"
             })?
             .expiry
             .checked_sub(chrono::Utc::now().timestamp() as u64)
             .ok_or("Token expired")
             .map_err(|e| {
-                debug!("token expired: {}", e);
+                trace!("token expired: {}", e);
                 "Not logged in"
             })?;
 
