@@ -1,3 +1,4 @@
+use crate::authenticate::SessionToken;
 use crate::hourmin::HourMin;
 use anyhow::{anyhow, Result};
 use chrono::{DateTime, Utc};
@@ -151,12 +152,11 @@ impl BookingApp {
         serde_json::to_string(&bookings_json)
     }
 
-    pub fn handle_new_booking(&mut self, booking: NewBooking) -> Result<(), String> {
-        let user = User {
-            username: "John Doe".to_string(), //TODO: get from auth
-            room: 42,
-        };
-
+    pub fn handle_new_booking(
+        &mut self,
+        booking: NewBooking,
+        session: SessionToken,
+    ) -> Result<(), String> {
         // Assert that the resource exists
         let resource = self
             .resources
@@ -226,7 +226,7 @@ impl BookingApp {
         }
 
         self.add_booking(Booking {
-            user,
+            user: session.get_user().to_owned(),
             resource_name: booking.resource_name,
             times,
         })

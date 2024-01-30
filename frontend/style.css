@@ -93,6 +93,7 @@ body {
 }
 
 .topnav p.active {
+  float: left;
   background-color: #777777;
   color: white;
 }
@@ -101,6 +102,11 @@ body {
 .topnav p.split {
   float: right;
   background-color: #04aa6d;
+  color: white;
+}
+
+.topnav p.middle {
+  float: center;
   color: white;
 }
 
@@ -213,12 +219,34 @@ input {
   padding: 0.5rem 1rem;
   margin: 0.5rem;
   cursor: pointer;
+  width: 200pt;
   font-size: 1rem;
   font-weight: 600;
   line-height: 1.5;
   text-align: left;
   font: inherit;
   text-decoration: none;
+}
+
+dialog div {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+}
+
+dialog div label {
+  display: block;
+  font-weight: bold;
+  margin-bottom: 5px;
+}
+
+dialog div input {
+  width: auto;
+  padding: 10px;
+  border: 1px solid #ccc;
+  border-radius: 5px;
 }
 
 dialog button.cta {

@@ -12,7 +12,7 @@ use anyhow::Result;
 use axum::{
     debug_handler,
     extract::{self, Json, Request, State},
-    http::StatusCode,
+    http::{response, StatusCode},
     middleware::{self, Next},
     response::{IntoResponse, Response},
     routing::{get, post},
@@ -27,6 +27,7 @@ use backend::{
     authenticate::{AuthApp, TokenId},
     booker::User,
 };
+use serde::de;
 use std::env;
 use std::sync::Arc;
 use std::time::Duration;
@@ -36,21 +37,26 @@ use tower_http::{
     catch_panic::CatchPanicLayer, compression::CompressionLayer, timeout::TimeoutLayer,
 };
 use tracing::{debug, error, info};
-use tracing_subscriber::filter::EnvFilter;
+use tracing_subscriber::{field::debug, filter::EnvFilter};
 
 #[debug_handler]
-// Handle errors with a custom handler
 async fn handle_new_booking(
-    State((booker, _auth)): State<(Arc<RwLock<BookingApp>>, Arc<RwLock<AuthApp>>)>,
+    State((booker, auth)): State<(Arc<RwLock<BookingApp>>, Arc<RwLock<AuthApp>>)>,
+    cookies: CookieJar,
     extract::Json(payload): extract::Json<NewBooking>,
-) -> impl IntoResponse {
+) -> Result<(StatusCode, String), (StatusCode, String)> {
     //assert login. This can also be done with middleware, but that is a bit more complicated
+    let session = auth
+        .read()
+        .await
+        .assert_login(cookies)
+        .map_err(|e| (StatusCode::UNAUTHORIZED, e))?;
 
-    match booker.write().await.handle_new_booking(payload) {
-        Ok(()) => (StatusCode::OK, "Booking created".to_string()),
+    match booker.write().await.handle_new_booking(payload, session) {
+        Ok(()) => Ok((StatusCode::OK, "Booking created".to_string())),
         Err(e) => {
             error!("Error creating new booking: {}", e);
-            (StatusCode::INTERNAL_SERVER_ERROR, e)
+            Err((StatusCode::INTERNAL_SERVER_ERROR, e))
         }
     }
 }
@@ -93,9 +99,8 @@ async fn hande_login(
     cookies: CookieJar,
     Json(payload): Json<backend::authenticate::LoginPayload>,
 ) -> Result<(StatusCode, CookieJar, Json<SessionToken>), StatusCode> {
+    let mut auth_app = auth_app.write().await;
     match auth_app
-        .write()
-        .await
         .authenticate_user(&payload.username, &payload.password)
         .await
     {
@@ -116,9 +121,51 @@ async fn hande_login(
     }
 }
 
+async fn check_login(
+    State(auth_app): State<Arc<RwLock<AuthApp>>>,
+    cookies: CookieJar,
+) -> Result<(StatusCode, Json<SessionToken>), StatusCode> {
+    let session_token = auth_app
+        .read()
+        .await
+        .assert_login(cookies)
+        .map_err(|e| StatusCode::OK)?;
+
+    Ok((StatusCode::ACCEPTED, Json(session_token)))
+}
+
+async fn handle_logout(
+    State(auth_app): State<Arc<RwLock<AuthApp>>>,
+    cookies: CookieJar,
+) -> Result<StatusCode, StatusCode> {
+    let token_id = TokenId::try_from(
+        cookies
+            .get("SESSION-COOKIE")
+            .ok_or("No cookie found")
+            .map_err(|e| {
+                error!("Error logging out: {}", e);
+                StatusCode::INTERNAL_SERVER_ERROR
+            })?
+            .value(),
+    )
+    .map_err(|e| {
+        error!("Error logging out: {}", e);
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+
+    auth_app.write().await.logout(&token_id).map_err(|e| {
+        error!("Error logging out: {}", e);
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+    debug!("logout succesful");
+    Ok(StatusCode::OK)
+}
+
 fn auth_api(auth_app: Arc<RwLock<AuthApp>>) -> Router {
     Router::new()
         .route("/login", post(hande_login))
+        .route("/login", get(check_login))
+        .route("/logout", get(handle_logout))
         .with_state(auth_app)
 }
 
@@ -143,12 +190,13 @@ async fn update_token(
     request: Request,
     next: Next,
 ) -> (CookieJar, Response) {
+    debug!("{}, {}", request.method(), request.uri().path());
+    let response = next.run(request).await;
     (
-        cookie_helper(cookies, auth_app).await.unwrap_or_else(|e| {
-            debug!("Error updating token: {}", e);
-            CookieJar::new()
-        }),
-        next.run(request).await,
+        cookie_helper(cookies, auth_app)
+            .await
+            .unwrap_or(CookieJar::new()),
+        response,
     )
 }
 
@@ -192,9 +240,9 @@ async fn main() -> Result<()> {
             booking_api(book_app, auth_app.clone()).into_service(),
         )
         .nest_service("/api/", auth_api(auth_app.clone()).into_service())
-        .nest_service("/", frontend)
         .layer(middleware)
-        .with_state(auth_app.clone());
+        .with_state(auth_app.clone())
+        .nest_service("/", frontend);
 
     // run our app with hyper, listening globally on port 3000
     let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{}", env::var("PORT")?)).await?;

@@ -1,5 +1,8 @@
 use anyhow::Result;
-use axum_extra::extract::cookie::{self, Cookie};
+use axum_extra::extract::{
+    cookie::{self, Cookie},
+    CookieJar,
+};
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
 use sha1::{Digest, Sha1};
@@ -57,6 +60,13 @@ impl TryFrom<&str> for TokenId {
     }
 }
 
+impl TryFrom<String> for TokenId {
+    type Error = String;
+    fn try_from(s: String) -> Result<Self, Self::Error> {
+        Self::try_from(s.as_str())
+    }
+}
+
 impl From<TokenId> for String {
     fn from(token: TokenId) -> Self {
         token.to_string()
@@ -85,6 +95,12 @@ impl TokenId {
 pub struct SessionToken {
     user: User,
     expiry: u64,
+}
+
+impl SessionToken {
+    pub fn get_user(&self) -> &User {
+        &self.user
+    }
 }
 
 pub struct AuthApp {
@@ -140,6 +156,38 @@ impl AuthApp {
         self.tokens.insert(new_token, session_token);
 
         Ok(Self::gen_cookie(&new_token))
+    }
+
+    pub fn assert_login(&self, jar: CookieJar) -> Result<SessionToken, String> {
+        let cookie = jar
+            .get("SESSION-COOKIE")
+            .ok_or("No cookie found")
+            .map_err(|e| {
+                debug!("cookie not found: {}", e);
+                "Not logged in"
+            })?
+            .value()
+            .to_string();
+
+        let token_id = TokenId::try_from(cookie)?;
+
+        debug!("Checking token: {}", token_id.to_string());
+        self.tokens
+            .get(&token_id)
+            .ok_or("Not logged in")
+            .map_err(|e| {
+                debug!("token not found: {}", e);
+                "Not logged in"
+            })?
+            .expiry
+            .checked_sub(chrono::Utc::now().timestamp() as u64)
+            .ok_or("Token expired")
+            .map_err(|e| {
+                debug!("token expired: {}", e);
+                "Not logged in"
+            })?;
+
+        Ok(self.tokens.get(&token_id).unwrap().clone())
     }
 
     pub async fn authenticate_user(
@@ -249,7 +297,6 @@ impl AuthApp {
             .get("room")
             .map(|room| {
                 room.to_string().split_whitespace().last().map(|s| {
-                    debug!("{}", s);
                     let mut chars = s.chars();
                     chars.next_back();
                     chars.as_str().parse::<u8>()
@@ -268,5 +315,11 @@ impl AuthApp {
         self.tokens.insert(token, session_token.clone());
 
         Ok((Self::gen_cookie(&token), session_token))
+    }
+
+    pub fn logout(&mut self, token: &TokenId) -> Result<(), String> {
+        self.tokens.remove(token).ok_or("Token not found")?;
+        debug!("Removed token: {}", token.to_string());
+        Ok(())
     }
 }

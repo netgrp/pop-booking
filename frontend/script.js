@@ -1,7 +1,4 @@
 function sendPostRequest(url, data) {
-  console.log("Sending POST request to " + url);
-  console.log(data);
-  console.log(JSON.stringify(data));
   return fetch(url, {
     method: "POST",
     body: JSON.stringify(data),
@@ -11,6 +8,17 @@ function sendPostRequest(url, data) {
   });
 }
 
+const Toast = Swal.mixin({
+  toast: true,
+  position: "bottom-end",
+  showConfirmButton: false,
+  timer: 3000,
+  timerProgressBar: true,
+  didOpen: (toast) => {
+    toast.onmouseenter = Swal.stopTimer;
+    toast.onmouseleave = Swal.resumeTimer;
+  }
+});
 
 
 
@@ -36,37 +44,97 @@ function switchPages(toPage) {
   }
 }
 
-function showLoginForm() {
-  let dialog = document.getElementById("login-dialog");
-  dialog.showModal();
+async function logout() {
+  document.getElementById("name-plate").innerHTML = "";
+  document.getElementById("login").innerHTML = "Login";
+  document.getElementById("login").onclick = showLoginForm;
+  let response = await fetch("/api/logout");
 
-  document.getElementById("login-button").onclick = async () => {
-    dialog.close();
-    try {
-      const response = await sendPostRequest("/api/login", {
-        username: document.getElementById("username").value,
-        password: document.getElementById("password").value,
-      });
+  if (response.status !== 200) {
+    Toast.fire({
+      icon: "error",
+      title: "Logout failed",
+    });
+    return;
+  }
 
-      if (response.status === 200) {
-        // Handle the successful response here
-        window.location.reload();
-      } else {
-        const errorText = await response.text();
-        Swal.fire({
+  logged_in = false;
+
+  Toast.fire({
+    icon: "success",
+    title: "Logout successful",
+  });
+}
+
+async function showLoginForm() {
+  return new Promise((resolve) => {
+    let dialog = document.getElementById("login-dialog");
+    dialog.showModal();
+
+    document.getElementById("login-button").onclick = async () => {
+      dialog.close();
+      try {
+        const response = await sendPostRequest("/api/login", {
+          username: document.getElementById("username").value,
+          password: document.getElementById("password").value,
+        });
+
+        if (response.status === 200) {
+          // Handle the successful response here
+          Toast.fire({
+            icon: "success",
+            title: "Login successful",
+          });
+
+          console.log("Login successful");
+
+          const data = await response.json();
+          document.getElementById("name-plate").innerHTML = "Room " + data.user.room;
+          document.getElementById("login").innerHTML = "Logout";
+          document.getElementById("login").onclick = logout;
+          logged_in = true;
+          resolve(true)
+        } else {
+          const errorText = await response.text();
+          Toast.fire({
+            icon: "error",
+            title: "Login failed",
+            text: errorText,
+          });
+          logged_in = false;
+          resolve(false);
+        }
+      } catch (error) {
+        Toast.fire({
           icon: "error",
           title: "Login failed",
-          text: errorText,
+          text: "Something went wrong",
         });
+        logged_in = false;
+        resolve(false)
       }
-    } catch (error) {
-      Swal.fire({
-        icon: "error",
-        title: "Login failed",
-        text: "Something went wrong",
-      });
     }
-  }
+
+    document.getElementById("cancel-button").onclick = () => {
+      dialog.close();
+      Toast.fire({
+        icon: "error",
+        title: "Login cancelled",
+      });
+      resolve(false);
+    }
+
+    dialog.addEventListener("keypress", (event) => {
+      if (event.key === "Enter") {
+        document.getElementById("login-button").click();
+      }
+    })
+
+    dialog.addEventListener('cancel', (event) => {
+      document.getElementById("cancel-button").click();
+
+    });
+  })
 }
 
 document.addEventListener("DOMContentLoaded", function () {
@@ -78,6 +146,7 @@ document.addEventListener("DOMContentLoaded", function () {
     selectable: true,
     selectMirror: true,
     unselectAuto: false,
+    eventClick: handle_event_click,
     weekNumbers: true,
     select: calendarSelect,
     headerToolbar: {
@@ -108,8 +177,21 @@ document.addEventListener("DOMContentLoaded", function () {
   calendar.render();
 });
 
+
 async function calendarSelect(info) {
+  if (!logged_in) {
+    if (await showLoginForm() == false) {
+      calendar.unselect();
+      return;
+    }
+  }
+  await newBooking(info);
+}
+
+async function newBooking(info) {
   return new Promise((resolve, reject) => {
+
+
     // fill in the form with information of the resources
     let dropdown = document.getElementById("resources-dropdown");
     getResources().then((resources) => {
@@ -129,54 +211,38 @@ async function calendarSelect(info) {
 
     let dialog = document.getElementById("create-booking-dialog");
     dialog.showModal();
-    const Toast = Swal.mixin({
-      toast: true,
-      position: "bottom-end",
-      showConfirmButton: false,
-      timer: 3000,
-      timerProgressBar: true,
-      didOpen: (toast) => {
-        toast.onmouseenter = Swal.stopTimer;
-        toast.onmouseleave = Swal.resumeTimer;
-      }
-    });
+
     dialog.addEventListener("close", (event) => {
       calendar.refetchEvents();
       calendar.unselect();
     });
     document.getElementById("create-booking-button").onclick = async () => {
       dialog.close();
-      try {
-        const response = await sendPostRequest("/api/book/new", {
-          start_time: rfc3339(start.value),
-          end_time: rfc3339(end.value),
-          resource_name: dropdown.value,
+      const response = await sendPostRequest("/api/book/new", {
+        start_time: rfc3339(start.value),
+        end_time: rfc3339(end.value),
+        resource_name: dropdown.value,
+      });
+
+      if (response.status === 200) {
+        Toast.fire({
+          icon: "success",
+          title: "Booking successful"
         });
 
-        if (response.status === 200) {
-          Toast.fire({
-            icon: "success",
-            title: "Booking successful"
-          });
-
-          console.log("Booking successful");
-          resolve();
-        } else {
-          const errorText = await response.text();
-          Toast.fire({
-            icon: "error",
-            title: "Booking failed: " + errorText
-          });
-          resolve();
-        }
-      } catch (error) {
+        console.log("Booking successful");
+        resolve();
+      } else if (response.status === 401) {
+        const errorText = await response.text();
         Toast.fire({
           icon: "error",
-          title: "Booking failed"
+          title: "Booking failed",
+          text: "You need to log in first",
+          // text: errorText,
         });
         resolve();
       }
-    };
+    }
     document.getElementById("cancel-booking-button").onclick = () => {
       dialog.close();
       resolve();
@@ -184,14 +250,38 @@ async function calendarSelect(info) {
   });
 }
 
+async function check_login() {
+  let response = await fetch("/api/login");
+  if (response.status === 202) {
+    const data = await response.json();
+    document.getElementById("name-plate").innerHTML = "Room " + data.user.room;
+    document.getElementById("login").innerHTML = "Logout";
+    document.getElementById("login").onclick = logout;
+    logged_in = true;
+  } else if (response.status === 200) { // 200 means not logged in
+    document.getElementById("login").onclick = showLoginForm;
+    document.getElementById("name-plate").innerHTML = "";
+    document.getElementById("login").innerHTML = "Login";
+    logged_in = false
+  }
+}
+
+async function handle_event_click(info) {
+  console.log(info);
+}
+
+var logged_in = false;
+document.onload = check_login();
+setInterval(async function () {
+  await check_login();
+}, 10000);
+
 async function getResources() {
   const response = await fetch('api/book/resources');
   const resources = await response.json();
-  // console.log(resources);
   // return a list of resource name strings
   let resourceNames = [];
   for (const [key, value] of Object.entries(resources)) {
-    // console.log(key, value);
     resourceNames.push([key, value.name]);
   }
   return resourceNames;
