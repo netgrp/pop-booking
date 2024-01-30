@@ -4,6 +4,9 @@ This is so far a hastily written frontend and backend for the new pop booking sy
 and create a piece of software that will last for a long time. The only real dependency there is in the program currently is the 
 login server from knet. It also relies on being able to compile rust code.
 
+Building depends on `build-essential libssl-dev`.
+Rustup install command `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh`.
+
 It compiles and runs with the command `cargo run --release --offline`. For debugging symbols leave out the release option.
 
 Environment variables are to be specified in the `.env` file in the backend directory. An example file is included.
