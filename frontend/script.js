@@ -233,7 +233,6 @@ async function newBooking(info) {
       calendar.unselect();
     });
     document.getElementById("create-booking-button").onclick = async () => {
-      dialog.close();
       const response = await sendPostRequest("/api/book/new", {
         start_time: rfc3339(start.value),
         end_time: rfc3339(end.value),
@@ -265,6 +264,7 @@ async function newBooking(info) {
         })
       }
       resolve();
+      dialog.close();
     }
     document.getElementById("cancel-booking-button").onclick = () => {
       dialog.close();

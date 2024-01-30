@@ -4,6 +4,84 @@
     "description": "",
     "allowed_times": ["06:00", "02:00"],
     "max_duration": "02:00",
+    "color": "#b84873"
+  },
+  "hottub": {
+    "name": "Hot tub",
+    "description": "",
+    "allowed_times": ["08:00", "02:00"],
+    "max_duration": "02:00",
+    "color": "#63c065"
+  },
+  "meetingroom": {
+    "name": "Meeting Room",
+    "description": "",
+    "allowed_times": ["06:00", "02:00"],
+    "max_duration": "02:00",
+    "color": "#5a398c"
+  },
+  "canoe1": {
+    "name": "Canoe 1",
+    "description": "",
+    "allowed_times": ["06:00", "02:00"],
+    "max_duration": "02:00",
+    "color": "#baac3d"
+  },
+  "canoe2": {
+    "name": "Canoe 2",
+    "description": "",
+    "allowed_times": ["06:00", "02:00"],
+    "max_duration": "02:00",
+    "color": "#6d83da"
+  },
+  "canoe3": {
+    "name": "Canoe 3",
+    "description": "",
+    "allowed_times": ["06:00", "02:00"],
+    "max_duration": "02:00",
+    "color": "#6c8f3e"
+  },
+  "canoe4": {
+    "name": "Canoe 4",
+    "description": "",
+    "allowed_times": ["06:00", "02:00"],
+    "max_duration": "02:00",
+    "color": "#bf68b8"
+  },
+  "kayak1": {
+    "name": "Kayak 1",
+    "description": "",
+    "allowed_times": ["06:00", "02:00"],
+    "max_duration": "02:00",
+    "color": "#45c097"
+  },
+  "kayak2": {
+    "name": "Kayak 2",
+    "description": "",
+    "allowed_times": ["06:00", "02:00"],
+    "max_duration": "02:00",
+    "color": "#b94b45"
+  },
+  "kayak3": {
+    "name": "Kayak 3",
+    "description": "",
+    "allowed_times": ["06:00", "02:00"],
+    "max_duration": "02:00",
+    "color": "#b0813b"
+  },
+  "kayak4": {
+    "name": "Kayak 4",
+    "description": "",
+    "allowed_times": ["06:00", "02:00"],
+    "max_duration": "02:00",
+    "color": "#c66131"
+  }
+}
+  "sauna": {
+    "name": "Sauna",
+    "description": "",
+    "allowed_times": ["06:00", "02:00"],
+    "max_duration": "02:00",
     "color": "#8b4513"
   },
   "hottub": {

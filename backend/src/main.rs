@@ -237,11 +237,11 @@ async fn main() -> Result<()> {
     let middleware = tower::ServiceBuilder::new()
         .layer(CompressionLayer::new().quality(tower_http::CompressionLevel::Fastest))
         .layer(TimeoutLayer::new(Duration::from_secs(30)))
-        .layer(CatchPanicLayer::new())
-        .layer(middleware::from_fn_with_state(
-            auth_app.clone(),
-            update_token,
-        ));
+        .layer(CatchPanicLayer::new());
+    // .layer(middleware::from_fn_with_state(
+    //     auth_app.clone(),
+    //     update_token,
+    // ));
 
     // build our application with routes
     let app = Router::new()
