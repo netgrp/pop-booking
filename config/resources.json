@@ -4,76 +4,76 @@
     "description": "",
     "allowed_times": ["06:00", "02:00"],
     "max_duration": "02:00",
-    "color": "#b84873"
+    "color": "#97aa48"
   },
   "hottub": {
     "name": "Hot tub",
     "description": "",
     "allowed_times": ["08:00", "02:00"],
     "max_duration": "02:00",
-    "color": "#63c065"
+    "color": "#6eaf90"
   },
   "meetingroom": {
     "name": "Meeting Room",
     "description": "",
     "allowed_times": ["06:00", "02:00"],
     "max_duration": "02:00",
-    "color": "#5a398c"
+    "color": "#e3000b"
   },
   "canoe1": {
     "name": "Canoe 1",
     "description": "",
     "allowed_times": ["06:00", "02:00"],
     "max_duration": "02:00",
-    "color": "#baac3d"
+    "color": "#0058d1"
   },
   "canoe2": {
     "name": "Canoe 2",
     "description": "",
     "allowed_times": ["06:00", "02:00"],
     "max_duration": "02:00",
-    "color": "#6d83da"
+    "color": "#f68231"
   },
   "canoe3": {
     "name": "Canoe 3",
     "description": "",
     "allowed_times": ["06:00", "02:00"],
     "max_duration": "02:00",
-    "color": "#6c8f3e"
+    "color": "#46aae4"
   },
   "canoe4": {
     "name": "Canoe 4",
     "description": "",
     "allowed_times": ["06:00", "02:00"],
     "max_duration": "02:00",
-    "color": "#bf68b8"
+    "color": "#a72112"
   },
   "kayak1": {
     "name": "Kayak 1",
     "description": "",
     "allowed_times": ["06:00", "02:00"],
     "max_duration": "02:00",
-    "color": "#45c097"
+    "color": "#075c84"
   },
   "kayak2": {
     "name": "Kayak 2",
     "description": "",
     "allowed_times": ["06:00", "02:00"],
     "max_duration": "02:00",
-    "color": "#b94b45"
+    "color": "#ef8371"
   },
   "kayak3": {
     "name": "Kayak 3",
     "description": "",
     "allowed_times": ["06:00", "02:00"],
     "max_duration": "02:00",
-    "color": "#b0813b"
+    "color": "#9e1480"
   },
   "kayak4": {
     "name": "Kayak 4",
     "description": "",
     "allowed_times": ["06:00", "02:00"],
     "max_duration": "02:00",
-    "color": "#c66131"
+    "color": "#585922"
   }
 }
