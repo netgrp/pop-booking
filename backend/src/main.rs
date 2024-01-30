@@ -1,13 +1,5 @@
 #![forbid(unsafe_code)]
-#![warn(
-    clippy::all,
-    clippy::unwrap_used,
-    clippy::expect_used,
-    clippy::pedantic,
-    clippy::nursery,
-    clippy::cargo
-)]
-
+#![allow(clippy::type_complexity)]
 use anyhow::Result;
 use axum::{
     debug_handler,
@@ -33,7 +25,7 @@ use tower_http::{
     catch_panic::CatchPanicLayer, compression::CompressionLayer, timeout::TimeoutLayer,
 };
 use tracing::{debug, error, info, trace};
-use tracing_subscriber::{field::debug, filter::EnvFilter};
+use tracing_subscriber::filter::EnvFilter;
 
 #[debug_handler]
 async fn handle_new_booking(

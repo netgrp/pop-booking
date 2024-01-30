@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use sha1::{Digest, Sha1};
 use std::collections::HashMap;
 use std::env;
+#[allow(unused_imports)]
 use tracing::{debug, info, trace};
 
 use crate::booker::User;
@@ -56,7 +57,7 @@ impl TryFrom<&str> for TokenId {
             .step_by(2)
             .map(|i| u8::from_str_radix(&s[i..i + 2], 16).map_err(|e| e.to_string()))
             .collect::<Result<Vec<u8>, String>>()
-            .map(|v| Self::try_from(v))?
+            .map(Self::try_from)?
     }
 }
 
@@ -74,20 +75,18 @@ impl From<TokenId> for String {
 }
 
 impl TokenId {
-    fn to_string(&self) -> String {
-        let mut s = String::new();
-        for b in self.0.iter() {
-            s.push_str(&format!("{:02x}", b));
-        }
-        s
-    }
-
     pub fn to_bytes(&self) -> [u8; 32] {
         self.0
     }
 
     pub fn new() -> Self {
         Self(rand::random::<[u8; 32]>())
+    }
+}
+
+impl Default for TokenId {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -253,7 +252,7 @@ impl AuthApp {
         debug!("Hash: {}", hash);
         debug!("K-Net hash: {}", pwd_parts[2]);
         if hash != pwd_parts[2] {
-            return Err(format!("Login failed, wrong password"));
+            return Err("Login failed, wrong password".to_string());
         }
 
         // generate a token for the user

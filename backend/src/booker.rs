@@ -7,7 +7,6 @@ use serde_json;
 use std::collections::HashMap;
 use std::env;
 use std::hash::{Hash, Hasher};
-use std::ops::Index;
 use tracing::{debug, info};
 
 #[derive(Debug, Deserialize)]
