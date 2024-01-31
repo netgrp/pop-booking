@@ -1,7 +1,7 @@
 use crate::authenticate::SessionToken;
 use crate::hourmin::HourMin;
 use anyhow::{anyhow, Result};
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Datelike, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json;
 use std::collections::HashMap;
@@ -24,23 +24,60 @@ pub struct DeletePayload {
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Serialize, Deserialize)]
 pub struct User {
     username: String,
-    room: u8,
+    room: u16,
 }
 
 impl User {
-    pub fn new(username: String, room: u8) -> Self {
+    pub fn new(username: String, room: u16) -> Self {
         Self { username, room }
     }
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
+struct ResourcePeriod {
+    //month and date
+    #[serde(deserialize_with = "month_day_from_str")]
+    start: (u32, u32),
+    #[serde(deserialize_with = "month_day_from_str")]
+    end: (u32, u32),
+}
+
+impl std::fmt::Display for ResourcePeriod {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{:02}-{:02} - {:02}-{:02}",
+            self.start.0, self.start.1, self.end.0, self.end.1
+        )
+    }
+}
+
+fn month_day_from_str<'de, D>(deserializer: D) -> Result<(u32, u32), D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let s = String::deserialize(deserializer)?;
+    let parts = s.split('-').collect::<Vec<&str>>();
+    if parts.len() != 2 {
+        return Err(serde::de::Error::custom(format!(
+            "Expected format: MM-DD, got: {}",
+            s
+        )));
+    }
+    let month = parts[0].parse::<u32>().map_err(serde::de::Error::custom)?;
+    let day = parts[1].parse::<u32>().map_err(serde::de::Error::custom)?;
+    Ok((month, day))
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
 struct Resource {
     name: String,
     description: String,
-    allowed_times: [HourMin; 2],
+    allowed_times: Option<[HourMin; 2]>,
     #[serde(deserialize_with = "minutes_from_str")]
     max_duration: u32, //in minutes
     color: String,
+    disallowed_periods: Option<Vec<String>>,
 }
 
 fn minutes_from_str<'de, D>(deserializer: D) -> Result<u32, D::Error>
@@ -77,6 +114,7 @@ struct Booking {
 pub struct BookingApp {
     bookings: HashMap<u32, Booking>,
     resources: HashMap<String, Resource>,
+    resource_periods: HashMap<String, ResourcePeriod>,
     cached_resource_json: Option<String>,
 }
 
@@ -89,9 +127,17 @@ impl BookingApp {
         let resources_content = std::fs::read_to_string(resources_path)?;
         let resources: HashMap<String, Resource> = serde_json::from_str(&resources_content)?;
 
+        let resource_periods_path = format!("{config_dir}/resource_periods.json");
+        info!("Loading resource periods from: {}", resource_periods_path);
+
+        let resource_periods_content = std::fs::read_to_string(resource_periods_path)?;
+        let resource_periods: HashMap<String, ResourcePeriod> =
+            serde_json::from_str(&resource_periods_content)?;
+
         Ok(Self {
             bookings: HashMap::new(),
             resources,
+            resource_periods,
             cached_resource_json: None,
         })
     }
@@ -173,7 +219,6 @@ impl BookingApp {
             .ok_or_else(|| format!("Resource {} does not exist", booking.resource_name.clone()))?;
 
         // Assert that the booking is within the allowed times
-        let allowed_times = resource.allowed_times;
         let times = [
             DateTime::parse_from_rfc3339(&booking.start_time)
                 .map_err(|e| format!("Error parsing start time: {}", e))?
@@ -203,29 +248,83 @@ impl BookingApp {
             ));
         }
 
-        let to_start = (allowed_times[1].to_minutes() - HourMin::from(times[0]).to_minutes())
-            .rem_euclid(1440) as u32;
-        let to_end = (allowed_times[0].to_minutes() - HourMin::from(times[1]).to_minutes())
-            .rem_euclid(1440) as u32;
+        if let Some(disallowed_periods) = &resource.disallowed_periods {
+            for disallowed_period_name in disallowed_periods {
+                let disallowed_period = self
+                    .resource_periods
+                    .get(disallowed_period_name)
+                    .ok_or_else(|| {
+                        format!(
+                            "Disallowed period {} does not exist",
+                            disallowed_period_name
+                        )
+                    })?;
 
-        debug!("To start: {}", to_start);
-        debug!("To end: {}", to_end);
+                debug!("Disallowed period: {}", disallowed_period);
 
-        if to_end < to_start {
-            return Err(format!(
-                "Booking outside allowed times: {} - {}",
-                allowed_times[0], allowed_times[1]
-            ));
+                // just check the month and day of the start and end booking time. Max booking length ensures this is ok
+                // at least in general
+
+                let start_month_day = (times[0].month(), times[0].day());
+                let end_month_day = (times[1].month(), times[1].day());
+
+                debug!("Start month day: {:?}", start_month_day);
+                debug!("End month day: {:?}", end_month_day);
+
+                let is_in_range = |start: (u32, u32), end: (u32, u32), target: (u32, u32)| {
+                    if start > end {
+                        // wrap around the year
+                        if target >= start || target <= end {
+                            return true;
+                        }
+                    } else if target >= start && target <= end {
+                        return true;
+                    }
+                    return false;
+                };
+
+                if is_in_range(
+                    disallowed_period.start,
+                    disallowed_period.end,
+                    start_month_day,
+                ) || is_in_range(
+                    disallowed_period.start,
+                    disallowed_period.end,
+                    end_month_day,
+                ) {
+                    return Err(format!(
+                        "Booking is in {}: {}",
+                        disallowed_period_name, disallowed_period
+                    ));
+                }
+            }
         }
 
-        let legal_duration = std::cmp::min(resource.max_duration, to_start);
+        if let Some(allowed_times) = resource.allowed_times {
+            let to_start = (allowed_times[1].to_minutes() - HourMin::from(times[0]).to_minutes())
+                .rem_euclid(1440) as u32;
+            let to_end = (allowed_times[0].to_minutes() - HourMin::from(times[1]).to_minutes())
+                .rem_euclid(1440) as u32;
 
-        debug!("Legal duration: {}", legal_duration);
-        if legal_duration < duration {
-            return Err(format!(
-                "Booking outside allowed times {} - {}",
-                allowed_times[0], allowed_times[1]
-            ));
+            debug!("To start: {}", to_start);
+            debug!("To end: {}", to_end);
+
+            if to_end < to_start {
+                return Err(format!(
+                    "Booking outside allowed times: {} - {}",
+                    allowed_times[0], allowed_times[1]
+                ));
+            }
+
+            let legal_duration = std::cmp::min(resource.max_duration, to_start);
+
+            debug!("Legal duration: {}", legal_duration);
+            if legal_duration < duration {
+                return Err(format!(
+                    "Booking outside allowed times {} - {}",
+                    allowed_times[0], allowed_times[1]
+                ));
+            }
         }
 
         if self.bookings.iter().any(|(_, existing_booking)| {
@@ -236,9 +335,12 @@ impl BookingApp {
             return Err("Booking overlaps with another booking".to_string());
         }
 
-        let id = rand::random();
+        let mut id = rand::random();
 
-        //check that id is unique
+        //ensure id is unique. This is definitely not necessary, but just in case
+        while self.bookings.contains_key(&id) {
+            id = rand::random();
+        }
 
         self.add_booking(
             &id,

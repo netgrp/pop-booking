@@ -1,0 +1,14 @@
+{
+  "winter_season": {
+    "start": "11-01",
+    "end": "03-30"
+  },
+  "exam-period-winter": {
+    "start": "12-01",
+    "end": "12-20"
+  },
+  "exam-period-summer": {
+    "start": "07-01",
+    "end": "07-20"
+  }
+}

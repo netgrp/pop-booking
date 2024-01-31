@@ -141,7 +141,7 @@ async function showLoginForm() {
 document.addEventListener("DOMContentLoaded", function () {
   var calendarEl = document.getElementById("calendar-div");
   calendar = new FullCalendar.Calendar(calendarEl, {
-    initialView: "timeGridWeek",
+    initialView: "month",
     events: '/api/book/events',
     height: "100%",
     selectable: true,
@@ -153,9 +153,21 @@ document.addEventListener("DOMContentLoaded", function () {
     headerToolbar: {
       left: 'today',
       center: 'title',
-      right: 'timeGridWeek,timeGridDay,prev,next'
+      right: 'month,timeGridWeek,timeGridDay,prev,next'
     },
     views: {
+      month: {
+        type: 'dayGridMonth',
+        buttonText: 'Month',
+        dayMaxEventRows: 3,
+        dayMaxEvents: true,
+        eventLimit: true,
+        eventTimeFormat: {
+          hour: 'numeric',
+          minute: '2-digit',
+          omitZeroMinute: true,
+        }
+      },
       timeGridWeek: {
         type: 'timeGrid',
         allDaySlot: false,
@@ -271,6 +283,10 @@ async function newBooking(info) {
       resolve();
     }
   });
+}
+
+function onSubmit(token) {
+  document.getElementById("demo-form").submit();
 }
 
 async function check_login() {

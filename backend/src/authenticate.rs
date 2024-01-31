@@ -298,7 +298,7 @@ impl AuthApp {
                 room.to_string().split_whitespace().last().map(|s| {
                     let mut chars = s.chars();
                     chars.next_back();
-                    chars.as_str().parse::<u8>()
+                    chars.as_str().parse::<u16>()
                 })
             })
             .ok_or("Failed to get room from K-Net")?

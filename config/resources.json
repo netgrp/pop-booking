@@ -2,78 +2,118 @@
   "sauna": {
     "name": "Sauna",
     "description": "",
-    "allowed_times": ["06:00", "02:00"],
-    "max_duration": "02:00",
-    "color": "#97aa48"
+    "max_duration": "10:00",
+    "color": "#838800"
   },
   "hottub": {
     "name": "Hot tub",
     "description": "",
-    "allowed_times": ["08:00", "02:00"],
-    "max_duration": "02:00",
-    "color": "#6eaf90"
+    "max_duration": "10:00",
+    "color": "#003ad9"
   },
   "meetingroom": {
     "name": "Meeting Room",
     "description": "",
-    "allowed_times": ["06:00", "02:00"],
-    "max_duration": "02:00",
-    "color": "#e3000b"
+    "allowed_times": ["06:00", "22:00"],
+    "max_duration": "06:00",
+    "color": "#00a44e"
   },
   "canoe1": {
     "name": "Canoe 1",
     "description": "",
-    "allowed_times": ["06:00", "02:00"],
-    "max_duration": "02:00",
-    "color": "#0058d1"
+    "max_duration": "48:00",
+    "color": "#b275ff",
+    "disallowed_periods": ["winter_season"]
   },
   "canoe2": {
     "name": "Canoe 2",
     "description": "",
-    "allowed_times": ["06:00", "02:00"],
-    "max_duration": "02:00",
-    "color": "#f68231"
+    "max_duration": "48:00",
+    "color": "#ed8b17",
+    "disallowed_periods": ["winter_season"]
   },
   "canoe3": {
     "name": "Canoe 3",
     "description": "",
-    "allowed_times": ["06:00", "02:00"],
-    "max_duration": "02:00",
-    "color": "#46aae4"
+    "max_duration": "48:00",
+    "color": "#002c79",
+    "disallowed_periods": ["winter_season"]
   },
   "canoe4": {
     "name": "Canoe 4",
     "description": "",
-    "allowed_times": ["06:00", "02:00"],
-    "max_duration": "02:00",
-    "color": "#a72112"
+    "max_duration": "48:00",
+    "color": "#9aab4a",
+    "disallowed_periods": ["winter_season"]
   },
   "kayak1": {
     "name": "Kayak 1",
     "description": "",
-    "allowed_times": ["06:00", "02:00"],
-    "max_duration": "02:00",
-    "color": "#075c84"
+    "max_duration": "48:00",
+    "color": "#ff486d",
+    "disallowed_periods": ["winter_season"]
   },
   "kayak2": {
     "name": "Kayak 2",
     "description": "",
-    "allowed_times": ["06:00", "02:00"],
-    "max_duration": "02:00",
-    "color": "#ef8371"
+    "max_duration": "48:00",
+    "color": "#00aabc",
+    "disallowed_periods": ["winter_season"]
   },
   "kayak3": {
     "name": "Kayak 3",
     "description": "",
-    "allowed_times": ["06:00", "02:00"],
-    "max_duration": "02:00",
-    "color": "#9e1480"
+    "max_duration": "48:00",
+    "color": "#c00035",
+    "disallowed_periods": ["winter_season"]
   },
   "kayak4": {
     "name": "Kayak 4",
     "description": "",
-    "allowed_times": ["06:00", "02:00"],
-    "max_duration": "02:00",
-    "color": "#585922"
+    "max_duration": "48:00",
+    "color": "#29213f",
+    "disallowed_periods": ["winter_season"]
+  },
+  "sup1": {
+    "name": "Paddleboard 1",
+    "description": "",
+    "max_duration": "48:00",
+    "color": "#e58d5c",
+    "disallowed_periods": ["winter_season"]
+  },
+  "sup2": {
+    "name": "Paddleboard 2",
+    "description": "",
+    "max_duration": "48:00",
+    "color": "#3b3b00",
+    "disallowed_periods": ["winter_season"]
+  },
+  "extraseatcanoe1": {
+    "name": "Extra Seat Canoe 1",
+    "description": "",
+    "max_duration": "48:00",
+    "color": "#fb7c7d",
+    "disallowed_periods": ["winter_season"]
+  },
+  "extraseatcanoe2": {
+    "name": "Extra Seat Canoe 2",
+    "description": "",
+    "max_duration": "48:00",
+    "color": "#a9a291",
+    "disallowed_periods": ["winter_season"]
+  },
+  "extraseatcanoe3": {
+    "name": "Extra Seat Canoe 3",
+    "description": "",
+    "max_duration": "48:00",
+    "color": "#852f00",
+    "disallowed_periods": ["winter_season"]
+  },
+  "extraseatcanoe4": {
+    "name": "Extra Seat Canoe 4",
+    "description": "",
+    "max_duration": "48:00",
+    "color": "#8d2a51",
+    "disallowed_periods": ["winter_season"]
   }
 }
