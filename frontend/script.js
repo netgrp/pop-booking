@@ -161,7 +161,6 @@ document.addEventListener("DOMContentLoaded", function () {
         buttonText: 'Month',
         dayMaxEventRows: 3,
         dayMaxEvents: true,
-        eventLimit: true,
         eventTimeFormat: {
           hour: 'numeric',
           minute: '2-digit',
