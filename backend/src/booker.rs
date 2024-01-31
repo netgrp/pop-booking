@@ -184,7 +184,7 @@ impl BookingApp {
             id: String,
             start: String,
             end: String,
-            owner: String,
+            owner: u16,
             color: String,
         }
 
@@ -199,7 +199,7 @@ impl BookingApp {
                 id: id.to_string(),
                 start: booking.times[0].to_rfc3339(),
                 end: booking.times[1].to_rfc3339(),
-                owner: booking.user.username.clone(),
+                owner: booking.user.room,
                 color: self.resources[&booking.resource_name].color.clone(),
             })
             .collect::<Vec<Event>>();

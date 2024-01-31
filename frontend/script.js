@@ -108,6 +108,7 @@ async function showLoginForm() {
           document.getElementById("login").onclick = logout;
           logged_in = true;
           username = data.user.username;
+          room = data.user.room;
           resolve(true)
         } else {
           const errorText = await response.text();
@@ -312,6 +313,7 @@ async function check_login() {
     document.getElementById("login").innerHTML = "Logout";
     document.getElementById("login").onclick = logout;
     username = data.user.username;
+    room = data.user.room;
     logged_in = true;
   } else if (response.status === 200) { // 200 means not logged in
     document.getElementById("login").onclick = showLoginForm;
@@ -325,7 +327,7 @@ async function handle_event_click(info) {
   new Promise((resolve, reject) => {
 
     //First check that the event is owned by the user
-    if (info.event.extendedProps.owner != username) {
+    if (info.event.extendedProps.owner != room) {
       document.getElementById("delete-booking-button").setAttribute("hidden", "");
     } else {
       document.getElementById("delete-booking-button").removeAttribute("hidden");
@@ -407,6 +409,7 @@ async function handle_event_click(info) {
 
 var logged_in = false;
 var username = "";
+var room = -1;
 document.onload = check_login();
 setInterval(async function () {
   await check_login();
