@@ -159,6 +159,7 @@ document.addEventListener("DOMContentLoaded", function () {
       month: {
         type: 'dayGridMonth',
         buttonText: 'Month',
+        select: (info) => { console.log(info); calendar.changeView('timeGridDay', info.startStr) },
         dayMaxEventRows: 3,
         dayMaxEvents: true,
         eventTimeFormat: {
