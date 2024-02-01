@@ -163,8 +163,43 @@ impl BookingApp {
         Ok(())
     }
 
-    pub fn get_resources(&self) -> Result<String, serde_json::Error> {
-        serde_json::to_string_pretty(&self.resources)
+    pub fn get_resources(&self) -> Result<String> {
+        #[derive(Serialize, Debug)]
+        struct Resource {
+            name: String,
+            disallowed_periods: Option<Vec<ResourcePeriod>>,
+        }
+        let resources = &self
+            .resources
+            .iter()
+            .map(|(name, resource)| {
+                Ok((
+                    name.clone(),
+                    Resource {
+                        name: resource.name.clone(),
+                        disallowed_periods: resource
+                            .disallowed_periods
+                            .clone()
+                            .map(|periods| {
+                                periods
+                                    .iter()
+                                    .map(|period_name| {
+                                        Ok(self
+                                            .resource_periods
+                                            .get(period_name)
+                                            .ok_or(anyhow!("resource period not found"))?
+                                            .clone())
+                                    })
+                                    .collect::<Result<Vec<ResourcePeriod>>>()
+                            })
+                            .transpose()?,
+                    },
+                ))
+            })
+            .collect::<Result<HashMap<String, Resource>>>()
+            .map_err(|e| anyhow!("Failed to create resource json {e}"))?;
+        serde_json::to_string_pretty(resources)
+            .map_err(|e| anyhow!("Failed to serialize json: {}", e))
     }
 
     // https://fullcalendar.io/docs/event-parsing
