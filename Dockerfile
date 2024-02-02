@@ -22,6 +22,5 @@ RUN cargo build --release
 FROM debian:buster-slim
 COPY --from=builder /app/frontend /app/frontend
 COPY --from=builder /app/target/release/backend /app
-COPY --from=builder /app/.env /app/
 WORKDIR /app
 CMD ["./backend"]
