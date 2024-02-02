@@ -23,7 +23,5 @@ FROM debian:buster-slim
 COPY --from=builder /app/frontend /app/frontend
 COPY --from=builder /app/target/release/backend /app
 COPY --from=builder /app/.env /app/
-COPY --from=builder /app/db /app/db
-COPY --from=builder /app/config /app/config
 WORKDIR /app
 CMD ["./backend"]
