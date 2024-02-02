@@ -164,8 +164,8 @@ document.addEventListener("DOMContentLoaded", function () {
     unselectAuto: false,
     eventClick: handle_event_click,
     weekNumbers: true,
-    select: calendarSelect,
     selectMinDistance: 10,
+    select: calendarSelect,
     headerToolbar: {
       left: 'today',
       center: 'title',
@@ -175,8 +175,9 @@ document.addEventListener("DOMContentLoaded", function () {
       month: {
         type: 'dayGridMonth',
         buttonText: 'Month',
-        dateClick: (info) => { calendar.changeView('timeGridDay', info.startStr) },
+        dateClick: (info) => { calendar.changeView('timeGridDay', info.date) },
         dayMaxEventRows: 3,
+        selectable: false,
         dayMaxEvents: true,
         eventTimeFormat: {
           hour: 'numeric',
@@ -237,7 +238,7 @@ async function newBooking(info) {
 
     // fill in the form with information of the resources
     let dropdown = document.getElementById("resources-dropdown");
-    getResources().then((resources) => {
+    getResources(info).then((resources) => {
       resources.sort();
       dropdown.innerHTML = "";
       resources.forEach((resource) => {
@@ -415,12 +416,46 @@ setInterval(async function () {
   await check_login();
 }, 10000);
 
-async function getResources() {
+async function getResources(info) {
   const response = await fetch('api/book/resources');
   const resources = await response.json();
   // return a list of resource name strings
+
   let resourceNames = [];
+  outer:
   for (const [key, value] of Object.entries(resources)) {
+    //check disallowed periods
+
+    if (value.disallowed_periods) {
+      for (const [period_name, dates] of Object.entries(value.disallowed_periods)) {
+
+        let is_in_range = (start, end, target) => {
+          //start = [month, date]
+          //end = [month, date]
+          //date = [month, date]
+          //returns true if date is in range
+
+          if (start > end) {
+            if (target >= start || target <= end) {
+              return true;
+            }
+          } else {
+            if (target >= start && target <= end) {
+              return true;
+            }
+          }
+          return false;
+        }
+
+        if ((is_in_range(dates.start, dates.end, [info.start.getMonth() + 1, info.start.getDate()])) ||
+          (is_in_range(dates.start, dates.end, [info.end.getMonth() + 1, info.end.getDate()]))) {
+          continue outer;
+        }
+
+      }
+    }
+
+
     resourceNames.push([key, value.name]);
   }
   return resourceNames;
