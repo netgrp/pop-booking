@@ -16,7 +16,7 @@ FROM rust:slim-buster as builder
 RUN apt update && apt install -y pkg-config libssl-dev
 WORKDIR /app
 COPY . .
-COPY --from=cacher /app/target target
+COPY --from=cacher /app/target /app/target
 RUN cargo build --release
 
 FROM debian:buster-slim
