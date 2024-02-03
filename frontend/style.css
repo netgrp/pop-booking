@@ -258,8 +258,8 @@ dialog div input {
   border-radius: 5px;
 }
 
-dialog div input.text {
-  width: 300pt;
+dialog select {
+  width: 200pt;
 }
 
 [hidden] {

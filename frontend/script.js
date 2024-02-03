@@ -232,6 +232,15 @@ async function calendarSelect(info) {
   await newBooking(info);
 }
 
+var selected = [];
+
+function optionChange() {
+  let dropdown = document.getElementById("resources-dropdown");
+  let value = dropdown.value;
+  console.log(value);
+  selected.push(value);
+}
+
 async function newBooking(info) {
   return new Promise((resolve, reject) => {
 
@@ -247,7 +256,7 @@ async function newBooking(info) {
         option.innerHTML = resource[1];
         dropdown.appendChild(option);
       });
-    })
+    });
 
     let start = document.getElementById("booking-start");
     let end = document.getElementById("booking-end");
@@ -265,7 +274,7 @@ async function newBooking(info) {
       const response = await sendPostRequest("/api/book/new", {
         start_time: rfc3339(start.value),
         end_time: rfc3339(end.value),
-        resource_name: dropdown.value,
+        resource_names: $('.resources-dropdown').select2('data').map((x) => x.id),
       });
 
       if (response.status === 200) {
@@ -485,3 +494,11 @@ function rfc3339(d) {
     pad(d.getSeconds()) +
     timezoneOffset(d.getTimezoneOffset());
 }
+
+$(document).ready(function () {
+  $('.resources-dropdown').select2({
+    dropdownParent: $('#create-booking-dialog'),
+    placeholder: "Select resources",
+    width: 'resolve'
+  });
+});

@@ -11,7 +11,7 @@ use tracing::{debug, info};
 
 #[derive(Debug, Deserialize)]
 pub struct NewBooking {
-    pub resource_name: String,
+    pub resource_names: Vec<String>,
     pub start_time: String,
     pub end_time: String,
 }
@@ -242,36 +242,16 @@ impl BookingApp {
         serde_json::to_string(&bookings_json)
     }
 
-    pub fn handle_new_booking(
-        &mut self,
-        booking: NewBooking,
-        session: SessionToken,
-    ) -> Result<String, String> {
-        // Assert that the resource exists
+    fn booking_helper(&self, booking: &Booking) -> Result<u32, String> {
+        // Assert that the resources exist
+        let duration = (booking.times[1] - booking.times[0]).num_minutes() as u32;
         let resource = self
             .resources
-            .get(&booking.resource_name)
-            .ok_or_else(|| format!("Resource {} does not exist", booking.resource_name.clone()))?;
-
-        // Assert that the booking is within the allowed times
-        let times = [
-            DateTime::parse_from_rfc3339(&booking.start_time)
-                .map_err(|e| format!("Error parsing start time: {}", e))?
-                .with_timezone(&Utc),
-            DateTime::parse_from_rfc3339(&booking.end_time)
-                .map_err(|e| format!("Error parsing end time: {}", e))?
-                .with_timezone(&Utc),
-        ];
-
-        if times[0] < Utc::now() {
-            return Err("Start time is in the past".to_string());
-        }
-
-        if times[0] > times[1] {
-            return Err("Start time is after end time".to_string());
-        }
-
-        let duration = (times[1] - times[0]).num_minutes() as u32;
+            .get(booking.resource_name.as_str())
+            .ok_or(format!(
+                "Resource {} does not exist",
+                booking.resource_name.as_str()
+            ))?;
 
         debug!("Duration: {}", duration);
         debug!("Max duration: {}", resource.max_duration);
@@ -285,10 +265,8 @@ impl BookingApp {
 
         if let Some(disallowed_periods) = &resource.disallowed_periods {
             for disallowed_period_name in disallowed_periods {
-                let disallowed_period = self
-                    .resource_periods
-                    .get(disallowed_period_name)
-                    .ok_or_else(|| {
+                let disallowed_period =
+                    self.resource_periods.get(disallowed_period_name).ok_or({
                         format!(
                             "Disallowed period {} does not exist",
                             disallowed_period_name
@@ -300,8 +278,8 @@ impl BookingApp {
                 // just check the month and day of the start and end booking time. Max booking length ensures this is ok
                 // at least in general
 
-                let start_month_day = (times[0].month(), times[0].day());
-                let end_month_day = (times[1].month(), times[1].day());
+                let start_month_day = (booking.times[0].month(), booking.times[0].day());
+                let end_month_day = (booking.times[1].month(), booking.times[1].day());
 
                 debug!("Start month day: {:?}", start_month_day);
                 debug!("End month day: {:?}", end_month_day);
@@ -336,10 +314,12 @@ impl BookingApp {
         }
 
         if let Some(allowed_times) = resource.allowed_times {
-            let to_start = (allowed_times[1].to_minutes() - HourMin::from(times[0]).to_minutes())
-                .rem_euclid(1440) as u32;
-            let to_end = (allowed_times[0].to_minutes() - HourMin::from(times[1]).to_minutes())
-                .rem_euclid(1440) as u32;
+            let to_start = (allowed_times[1].to_minutes()
+                - HourMin::from(booking.times[0]).to_minutes())
+            .rem_euclid(1440) as u32;
+            let to_end = (allowed_times[0].to_minutes()
+                - HourMin::from(booking.times[1]).to_minutes())
+            .rem_euclid(1440) as u32;
 
             debug!("To start: {}", to_start);
             debug!("To end: {}", to_end);
@@ -364,8 +344,8 @@ impl BookingApp {
 
         if self.bookings.iter().any(|(_, existing_booking)| {
             booking.resource_name == existing_booking.resource_name
-                && times[0] < existing_booking.times[1]
-                && times[1] > existing_booking.times[0]
+                && booking.times[0] < existing_booking.times[1]
+                && booking.times[1] > existing_booking.times[0]
         }) {
             return Err("Booking overlaps with another booking".to_string());
         }
@@ -377,15 +357,63 @@ impl BookingApp {
             id = rand::random();
         }
 
-        self.add_booking(
-            &id,
-            Booking {
-                user: session.get_user().to_owned(),
-                resource_name: booking.resource_name,
-                times,
-            },
-        )?;
-        Ok(id.to_string())
+        Ok(id)
+    }
+
+    pub fn handle_new_booking(
+        &mut self,
+        booking: NewBooking,
+        session: SessionToken,
+    ) -> Result<String, String> {
+        // Assert that the booking is within the allowed times
+
+        let times = [
+            DateTime::parse_from_rfc3339(&booking.start_time)
+                .map_err(|e| format!("Error parsing start time: {}", e))?
+                .with_timezone(&Utc),
+            DateTime::parse_from_rfc3339(&booking.end_time)
+                .map_err(|e| format!("Error parsing end time: {}", e))?
+                .with_timezone(&Utc),
+        ];
+
+        if times[0] < Utc::now() {
+            return Err("Start time is in the past".to_string());
+        }
+
+        if times[0] > times[1] {
+            return Err("Start time is after end time".to_string());
+        }
+
+        let results = booking
+            .resource_names
+            .into_iter()
+            .map(|resource_name| -> Result<u32, String> {
+                let booking = Booking {
+                    user: session.get_user().clone(),
+                    resource_name,
+                    times,
+                };
+
+                let id = self.booking_helper(&booking)?;
+
+                self.add_booking(&id, booking)?;
+                Ok(id)
+            })
+            .collect::<Vec<_>>();
+
+        if results.iter().any(|result| result.is_err()) {
+            //all bookings should be successful
+            results
+                .iter()
+                .filter(|result| result.is_ok())
+                .for_each(|result| {
+                    let id = result.as_ref().unwrap();
+                    self.bookings.remove(id);
+                });
+            return Err(format!("Error adding booking"));
+        }
+
+        Ok("Booking successful".to_string())
     }
 
     pub fn handle_delete(&mut self, payload: DeletePayload) -> Result<(), String> {
