@@ -13,3 +13,13 @@ Environment variables are to be specified in the `.env` file in the backend dire
 
 The available resources can be changed in the resources.json file. Hopefully this becomes a piece of software which is both robust and 
 is easy to change and improve.
+
+## Building with docker/podman
+
+If deploying with docker/podman, build the image with the dockerfile
+
+`docker build -t imagename .`
+
+And then run it while binding the necessary port and volumes, along with the environment file.
+
+`docker run -it  -p 8080:8080 -v $(pwd)/db:/app/db -v $(pwd)/config:/app/config --env-file .env imagename`

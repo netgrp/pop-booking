@@ -217,7 +217,7 @@ async fn main() -> Result<()> {
         .with_env_filter(EnvFilter::from_default_env())
         .init();
 
-    dotenvy::dotenv()?;
+    dotenvy::dotenv().unwrap_or_default();
 
     let frontend = ServeDir::new(env::var("FRONTEND_DIR")?);
 
