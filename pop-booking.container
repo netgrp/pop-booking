@@ -1,0 +1,20 @@
+[Unit]
+Description=A system to book items at the pop dormitory
+After=network.target
+
+[Container]
+User=1008
+ContainerName=pop-booking
+Image=ghcr.io/netgrp/pop-booking:release
+AutoUpdate=registry
+Volume={DB PATH}:/app/db
+Volume={CONFIG PATH}:/app/config
+EnvironmentFile={.env PATH}
+PublishPort={EXT_PORT}:{INT_PORT}
+
+[Service]
+Restart=always
+TimeoutStartSec=900
+
+[Install]
+WantedBy=multi-user.target
