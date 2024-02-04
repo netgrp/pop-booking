@@ -12,8 +12,29 @@ use tracing::{debug, info};
 #[derive(Debug, Deserialize)]
 pub struct NewBooking {
     pub resource_names: Vec<String>,
-    pub start_time: String,
-    pub end_time: String,
+    #[serde(deserialize_with = "parse_rfc3339")]
+    pub start_time: DateTime<Utc>,
+    #[serde(deserialize_with = "parse_rfc3339")]
+    pub end_time: DateTime<Utc>,
+}
+
+fn parse_rfc3339<'de, D>(deserializer: D) -> Result<DateTime<Utc>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let s = String::deserialize(deserializer)?;
+    DateTime::parse_from_rfc3339(&s)
+        .map_err(serde::de::Error::custom)
+        .map(|dt| dt.with_timezone(&Utc))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ChangeBooking {
+    pub id: u32,
+    #[serde(deserialize_with = "parse_rfc3339")]
+    pub start_time: DateTime<Utc>,
+    #[serde(deserialize_with = "parse_rfc3339")]
+    pub end_time: DateTime<Utc>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -104,11 +125,12 @@ impl Hash for Resource {
     }
 }
 
-#[derive(Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Debug, Deserialize, Serialize, PartialEq, Eq, Clone)]
 struct Booking {
     user: User,
     resource_name: String,
-    times: [DateTime<Utc>; 2],
+    start_time: DateTime<Utc>,
+    end_time: DateTime<Utc>,
 }
 
 pub struct BookingApp {
@@ -232,8 +254,8 @@ impl BookingApp {
                     booking.user.room, self.resources[&booking.resource_name].name
                 ),
                 id: id.to_string(),
-                start: booking.times[0].to_rfc3339(),
-                end: booking.times[1].to_rfc3339(),
+                start: booking.start_time.to_rfc3339(),
+                end: booking.end_time.to_rfc3339(),
                 owner: booking.user.room,
                 color: self.resources[&booking.resource_name].color.clone(),
             })
@@ -242,9 +264,9 @@ impl BookingApp {
         serde_json::to_string(&bookings_json)
     }
 
-    fn booking_helper(&self, booking: &Booking) -> Result<u32, String> {
+    fn check_available(&self, allow_id: Option<u32>, booking: &Booking) -> Result<(), String> {
         // Assert that the resources exist
-        let duration = (booking.times[1] - booking.times[0]).num_minutes() as u32;
+        let duration = (booking.end_time - booking.start_time).num_minutes() as u32;
         let resource = self
             .resources
             .get(booking.resource_name.as_str())
@@ -278,8 +300,8 @@ impl BookingApp {
                 // just check the month and day of the start and end booking time. Max booking length ensures this is ok
                 // at least in general
 
-                let start_month_day = (booking.times[0].month(), booking.times[0].day());
-                let end_month_day = (booking.times[1].month(), booking.times[1].day());
+                let start_month_day = (booking.start_time.month(), booking.start_time.day());
+                let end_month_day = (booking.start_time.month(), booking.start_time.day());
 
                 debug!("Start month day: {:?}", start_month_day);
                 debug!("End month day: {:?}", end_month_day);
@@ -315,10 +337,10 @@ impl BookingApp {
 
         if let Some(allowed_times) = resource.allowed_times {
             let to_start = (allowed_times[1].to_minutes()
-                - HourMin::from(booking.times[0]).to_minutes())
+                - HourMin::from(booking.start_time).to_minutes())
             .rem_euclid(1440) as u32;
             let to_end = (allowed_times[0].to_minutes()
-                - HourMin::from(booking.times[1]).to_minutes())
+                - HourMin::from(booking.end_time).to_minutes())
             .rem_euclid(1440) as u32;
 
             debug!("To start: {}", to_start);
@@ -342,22 +364,16 @@ impl BookingApp {
             }
         }
 
-        if self.bookings.iter().any(|(_, existing_booking)| {
+        if self.bookings.iter().any(|(&id, existing_booking)| {
             booking.resource_name == existing_booking.resource_name
-                && booking.times[0] < existing_booking.times[1]
-                && booking.times[1] > existing_booking.times[0]
+                && booking.start_time < existing_booking.end_time
+                && booking.end_time > existing_booking.start_time
+                && Some(id) != allow_id
         }) {
             return Err("Booking overlaps with another booking".to_string());
         }
 
-        let mut id = rand::random();
-
-        //ensure id is unique. This is definitely not necessary, but just in case
-        while self.bookings.contains_key(&id) {
-            id = rand::random();
-        }
-
-        Ok(id)
+        Ok(())
     }
 
     pub fn handle_new_booking(
@@ -367,20 +383,11 @@ impl BookingApp {
     ) -> Result<String, String> {
         // Assert that the booking is within the allowed times
 
-        let times = [
-            DateTime::parse_from_rfc3339(&booking.start_time)
-                .map_err(|e| format!("Error parsing start time: {}", e))?
-                .with_timezone(&Utc),
-            DateTime::parse_from_rfc3339(&booking.end_time)
-                .map_err(|e| format!("Error parsing end time: {}", e))?
-                .with_timezone(&Utc),
-        ];
-
-        if times[0] < Utc::now() {
+        if booking.start_time < Utc::now() {
             return Err("Start time is in the past".to_string());
         }
 
-        if times[0] > times[1] {
+        if booking.start_time > booking.end_time {
             return Err("Start time is after end time".to_string());
         }
 
@@ -391,10 +398,18 @@ impl BookingApp {
                 let booking = Booking {
                     user: session.get_user().clone(),
                     resource_name,
-                    times,
+                    start_time: booking.start_time,
+                    end_time: booking.end_time,
                 };
 
-                let id = self.booking_helper(&booking)?;
+                self.check_available(None, &booking)?;
+
+                let mut id = rand::random();
+
+                //ensure id is unique. This is definitely not necessary, but just in case
+                while self.bookings.contains_key(&id) {
+                    id = rand::random();
+                }
 
                 self.add_booking(&id, booking)?;
                 Ok(id)
@@ -488,5 +503,28 @@ impl BookingApp {
         std::fs::write(bookings_path, bookings_content).unwrap();
 
         Ok(())
+    }
+
+    pub fn handle_change_booking(&mut self, change_booking: ChangeBooking) -> Result<(), String> {
+        let id = change_booking.id;
+
+        //check that booking exists
+        debug!("Checking if booking exists");
+        let mut booking = self
+            .bookings
+            .get(&id)
+            .ok_or("Booking does not exist".to_string())?
+            .clone();
+
+        booking.start_time = change_booking.start_time;
+        booking.end_time = change_booking.end_time;
+
+        //check that booking is within allowed times
+        debug!("Checking if booking is within allowed times");
+        self.check_available(Some(id), &booking)?;
+
+        //update booking
+        debug!("Updating booking");
+        self.add_booking(&id, booking)
     }
 }
