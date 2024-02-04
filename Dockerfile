@@ -15,8 +15,9 @@ WORKDIR /app
 COPY . .
 RUN cargo build --release
 
-FROM debian:buster-slim as runtime
+FROM alpine:latest as runtime
+RUN apk --no-cache add libc6-compat libgcc
 COPY --from=builder /app/frontend /app/frontend
 COPY --from=builder /app/target/release/backend /app
 WORKDIR /app
-CMD ["./backend"]
+CMD ["sh"]

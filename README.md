@@ -18,8 +18,14 @@ is easy to change and improve.
 
 If deploying with docker/podman, build the image with the dockerfile
 
-`docker build -t imagename .`
+`docker build -t <imagename> .`
 
 And then run it while binding the necessary port and volumes, along with the environment file.
 
-`docker run -it  -p 8080:8080 -v $(pwd)/db:/app/db -v $(pwd)/config:/app/config --env-file .env imagename`
+`docker run -p 8080:8080 -v ./db:/app/db -v ./config:/app/config --env-file .env <imagename>`
+
+## Deploying as a systemd service with podman quadlet
+
+For deploying this as a systemd service there is an included quadlet file `pop-booking.container`. For a rootless deployment place this file in `$HOME/.config/containers/systemd/` then reload the deamon to generate a new service `systemctl --user daemon-reload`. If the service isn't generated check the output of /usr/libexec/podman/quadlet -dryrun -user to see that it's generating, and that podman is set up as a systemd user generator. 
+
+After reloading, if everything has been configured correctly, the service can be started with `systemctl --user start pop-booking`. To allow the service to start itself you will need to enable login linger for the user running podman, which is done by running `loginctl enable-linger <userame>`.

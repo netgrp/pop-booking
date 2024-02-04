@@ -5,16 +5,19 @@ use axum::{
     debug_handler,
     extract::{self, Json, Request, State},
     http::StatusCode,
-    middleware::{self, Next},
+    middleware::Next,
     response::Response,
     routing::{get, post},
     Router,
 };
-use axum_extra::extract::cookie::{Cookie, CookieJar};
-use backend::authenticate::{AuthApp, TokenId};
+use axum_extra::extract::cookie::CookieJar;
 use backend::{
     authenticate::SessionToken,
     booker::{BookingApp, DeletePayload, NewBooking},
+};
+use backend::{
+    authenticate::{AuthApp, TokenId},
+    booker::ChangeBooking,
 };
 use std::env;
 use std::sync::Arc;
@@ -49,6 +52,36 @@ async fn handle_new_booking(
     }
 }
 
+async fn handle_change_booking(
+    State((booker, auth)): State<(Arc<RwLock<BookingApp>>, Arc<RwLock<AuthApp>>)>,
+    cookies: CookieJar,
+    extract::Json(payload): extract::Json<ChangeBooking>,
+) -> Result<(StatusCode, String), (StatusCode, String)> {
+    debug!("Changing booking: {:?}", payload);
+    //assert login. This can also be done with middleware, but that is a bit more complicated
+    let session = auth
+        .read()
+        .await
+        .assert_login(cookies)
+        .map_err(|e| (StatusCode::UNAUTHORIZED, e))?;
+
+    //check that the user is allowed to delete the booking
+    if !booker.read().await.assert_id(&payload.id, &session) {
+        return Err((
+            StatusCode::FORBIDDEN,
+            "You are not allowed to delete this booking".to_string(),
+        ));
+    }
+
+    match booker.write().await.handle_change_booking(payload) {
+        Ok(()) => Ok((StatusCode::OK, "Booking changed".to_string())),
+        Err(e) => {
+            error!("Error changing booking: {}", e);
+            Err((StatusCode::INTERNAL_SERVER_ERROR, e))
+        }
+    }
+}
+
 async fn handle_delete(
     State((booker, auth)): State<(Arc<RwLock<BookingApp>>, Arc<RwLock<AuthApp>>)>,
     cookies: CookieJar,
@@ -56,10 +89,19 @@ async fn handle_delete(
 ) -> Result<(StatusCode, String), (StatusCode, String)> {
     debug!("Deleting booking: {:?}", payload);
     //assert login. This can also be done with middleware, but that is a bit more complicated
-    auth.read()
+    let session = auth
+        .read()
         .await
         .assert_login(cookies)
         .map_err(|e| (StatusCode::UNAUTHORIZED, e))?;
+
+    //check that the user is allowed to delete the booking
+    if !booker.read().await.assert_id(&payload.id, &session) {
+        return Err((
+            StatusCode::FORBIDDEN,
+            "You are not allowed to delete this booking".to_string(),
+        ));
+    }
 
     match booker.write().await.handle_delete(payload) {
         Ok(()) => Ok((StatusCode::OK, "Booking deleted".to_string())),
@@ -100,6 +142,7 @@ fn booking_api(book_app: Arc<RwLock<BookingApp>>, auth_app: Arc<RwLock<AuthApp>>
         .route("/events", get(handle_bookings))
         .route("/resources", get(handle_resources))
         .route("/delete", post(handle_delete))
+        .route("/change", post(handle_change_booking))
         .with_state((book_app, auth_app))
 }
 
@@ -118,11 +161,7 @@ async fn hande_login(
             debug!("login succesful");
             debug!("Adding cookie: {}", cookie);
 
-            Ok((
-                StatusCode::OK,
-                cookies.add(Cookie::parse(cookie).unwrap()),
-                Json(session_token),
-            ))
+            Ok((StatusCode::OK, cookies.add(cookie), Json(session_token)))
         }
         Err(e) => {
             debug!("Error logging in: {}", e);
@@ -191,7 +230,7 @@ async fn cookie_helper(
         .update_token(&token_id)
         .map_err(|e| format!("Error updating token: {}", e))?;
 
-    Ok(cookies.add(Cookie::parse(cookie).unwrap()))
+    Ok(cookies.add(cookie.into_owned()))
 }
 
 async fn update_token(
@@ -233,6 +272,11 @@ async fn main() -> Result<()> {
         .load_bookings(&env::var("BOOKINGS_DIR")?)?;
 
     let auth_app = Arc::new(RwLock::new(AuthApp::new()?));
+    let cleaner = auth_app.clone();
+
+    tokio::spawn(async {
+        AuthApp::start_token_cleanup(cleaner).await.unwrap();
+    });
 
     let middleware = tower::ServiceBuilder::new()
         .layer(CompressionLayer::new().quality(tower_http::CompressionLevel::Fastest))
