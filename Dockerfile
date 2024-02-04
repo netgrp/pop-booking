@@ -19,4 +19,4 @@ FROM debian:buster-slim as runtime
 COPY --from=builder /app/frontend /app/frontend
 COPY --from=builder /app/target/release/backend /usr/local/bin/backend
 WORKDIR /app
-ENTRYPOINT ["/usr/local/bin/backend"]
+RUN ["/usr/local/bin/backend"]
