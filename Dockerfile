@@ -17,6 +17,6 @@ RUN cargo build --release
 
 FROM debian:buster-slim as runtime
 COPY --from=builder /app/frontend /app/frontend
-COPY --from=builder /app/target/release/backend /usr/local/bin/backend
+COPY --from=builder /app/target/release/backend /app
 WORKDIR /app
-RUN ["/usr/local/bin/backend"]
+CMD ["./backend"]
