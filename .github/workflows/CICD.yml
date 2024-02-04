@@ -29,7 +29,7 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-      # - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v3
       - name: Build and push Docker image
         uses: docker/build-push-action@v5
         with:
@@ -38,5 +38,5 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           provenance: false
-          # cache-from: type=gha
-          # cache-to: type=gha,mode=max
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
