@@ -1,3 +1,4 @@
+use crate::booker::User;
 use anyhow::Result;
 use axum_extra::extract::{
     cookie::{self, Cookie},
@@ -6,12 +7,12 @@ use axum_extra::extract::{
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
 use sha1::{Digest, Sha1};
-use std::collections::HashMap;
 use std::env;
+use std::{collections::HashMap, sync::Arc};
+use tokio::sync::RwLock;
+use tokio::time::{self, Duration};
 #[allow(unused_imports)]
 use tracing::{debug, info, trace};
-
-use crate::booker::User;
 
 #[derive(Deserialize)]
 pub struct LoginPayload {
@@ -129,17 +130,23 @@ impl AuthApp {
         })
     }
 
-    fn gen_cookie(token: &TokenId) -> String {
+    fn gen_cookie(token: &TokenId) -> Cookie<'static> {
         trace!("Generating cookie with token: {}", token.to_string());
-        Cookie::build(("SESSION-COOKIE", token.to_string()))
+        let mut builder = Cookie::build(("SESSION-COOKIE", token.to_string()))
             .expires(None)
             .same_site(cookie::SameSite::Strict)
-            .path("/")
-            .build()
-            .to_string()
+            .path("/");
+
+        if cfg!(debug_assertions) {
+            builder = builder.secure(false);
+        } else {
+            builder = builder.secure(true);
+        }
+
+        builder.build().into_owned()
     }
 
-    pub fn update_token(&mut self, token: &TokenId) -> Result<String, String> {
+    pub fn update_token(&mut self, token: &TokenId) -> Result<Cookie<'static>, String> {
         //assert that token is valid
         self.tokens
             .get(token)
@@ -170,7 +177,6 @@ impl AuthApp {
 
         let token_id = TokenId::try_from(cookie)?;
 
-        trace!("Checking token: {}", token_id.to_string());
         self.tokens
             .get(&token_id)
             .ok_or("Not logged in")
@@ -193,7 +199,7 @@ impl AuthApp {
         &mut self,
         username: &str,
         password: &str,
-    ) -> Result<(String, SessionToken), String> {
+    ) -> Result<(Cookie<'static>, SessionToken), String> {
         let url = format!(
             "{}network/user/?username={}",
             self.knet_api_base_url, username
@@ -320,5 +326,32 @@ impl AuthApp {
         self.tokens.remove(token).ok_or("Token not found")?;
         debug!("Removed token: {}", token.to_string());
         Ok(())
+    }
+
+    pub fn clean_expired_tokens(&mut self) -> u32 {
+        let now = chrono::Utc::now().timestamp() as u64;
+        let expired_tokens = self
+            .tokens
+            .iter()
+            .filter(|(_, token)| token.expiry <= now)
+            .map(|(token_id, _)| *token_id)
+            .collect::<Vec<_>>();
+
+        let count = expired_tokens.len() as u32;
+
+        for token_id in expired_tokens {
+            self.tokens.remove(&token_id);
+            debug!("Removed expired token: {}", token_id.to_string());
+        }
+        count
+    }
+
+    pub async fn start_token_cleanup(app: Arc<RwLock<Self>>) -> Result<()> {
+        let mut interval = time::interval(Duration::from_secs(3600));
+        loop {
+            interval.tick().await;
+            let count = app.write().await.clean_expired_tokens();
+            info!("Cleaning expired tokens done, removed {} tokens", count);
+        }
     }
 }

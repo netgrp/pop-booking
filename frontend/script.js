@@ -8,6 +8,7 @@ function sendPostRequest(url, data) {
   });
 }
 
+
 const Toast = Swal.mixin({
   toast: true,
   position: "bottom-end",
@@ -20,6 +21,15 @@ const Toast = Swal.mixin({
   }
 });
 
+document.addEventListener('keydown', function (event) {
+  if (event.key === 'Escape') {
+    Swal.clickCancel();
+  }
+  if (event.key === "Enter") {
+    Swal.clickConfirm();
+  }
+
+}, true); //use capture so it triggers before bootstrap
 
 document.addEventListener('swiped-left', function (e) {
   calendar.next();
@@ -59,9 +69,6 @@ function switchPages(toPage) {
 }
 
 async function logout() {
-  document.getElementById("name-plate").innerHTML = "";
-  document.getElementById("login").innerHTML = "Login";
-  document.getElementById("login").onclick = showLoginForm;
   let response = await fetch("/api/logout");
 
   if (response.status !== 200) {
@@ -72,7 +79,7 @@ async function logout() {
     return;
   }
 
-  logged_in = false;
+  onSignOut();
 
   Toast.fire({
     icon: "success",
@@ -82,82 +89,146 @@ async function logout() {
 
 async function showLoginForm() {
   return new Promise((resolve) => {
-    let dialog = document.getElementById("login-dialog");
-    dialog.showModal();
-
-    document.getElementById("login-button").onclick = async () => {
-      dialog.close();
-      try {
-        const response = await sendPostRequest("/api/login", {
-          username: document.getElementById("username").value,
-          password: document.getElementById("password").value,
-        });
-
-        if (response.status === 200) {
-          // Handle the successful response here
-          Toast.fire({
-            icon: "success",
-            title: "Login successful",
+    Swal.fire({
+      title: 'Login',
+      html: `
+        <label for="username">Username:</label>
+        <input type="text" id="username" class="swal2-input" placeholder="Username" style="margin: 5pt 5pt" required>
+        <label for="password">Password:</label>
+        <input type="password" id="password" class="swal2-input" placeholder="Password" style="margin: 5pt 5pt" required>`,
+      showCancelButton: true,
+      padding: '1em',
+      confirmButtonText: 'Login',
+      confirmButtonColor: '#4BB543',
+      allowEnterKey: true,
+      cancelButtonText: 'Cancel',
+      focusConfirm: false,
+      preConfirm: async () => {
+        try {
+          const response = await sendPostRequest("/api/login", {
+            username: document.getElementById("username").value,
+            password: document.getElementById("password").value,
           });
 
-          console.log("Login successful");
+          if (response.status === 200) {
+            // Handle the successful response here
+            Toast.fire({
+              icon: "success",
+              title: "Login successful",
+            });
 
-          const data = await response.json();
-          document.getElementById("name-plate").innerHTML = "Room " + data.user.room;
-          document.getElementById("login").innerHTML = "Logout";
-          document.getElementById("login").onclick = logout;
-          logged_in = true;
-          username = data.user.username;
-          room = data.user.room;
-          resolve(true)
-        } else {
-          const errorText = await response.text();
+            const data = await response.json();
+            onSignIn(data.user);
+            resolve(true);
+          } else {
+            const errorText = await response.text();
+            Toast.fire({
+              icon: "error",
+              title: "Login failed",
+              text: errorText,
+            });
+            resolve(false);
+          }
+        } catch (error) {
           Toast.fire({
             icon: "error",
             title: "Login failed",
-            text: errorText,
+            text: "Something went wrong",
           });
-          logged_in = false;
           resolve(false);
         }
-      } catch (error) {
+      },
+      allowOutsideClick: () => !Swal.isLoading()
+    }).then((result) => {
+      if (result.dismiss === Swal.DismissReason.cancel) {
         Toast.fire({
           icon: "error",
-          title: "Login failed",
-          text: "Something went wrong",
+          title: "Login cancelled",
         });
-        logged_in = false;
-        resolve(false)
+        resolve(false);
       }
-    }
-
-    document.getElementById("cancel-button").onclick = () => {
-      dialog.close();
-      Toast.fire({
-        icon: "error",
-        title: "Login cancelled",
-      });
-      resolve(false);
-    }
-
-    dialog.addEventListener("keypress", (event) => {
-      if (event.key === "Enter") {
-        document.getElementById("login-button").click();
-      }
-    })
-
-    dialog.addEventListener('cancel', (event) => {
-      document.getElementById("cancel-button").click();
-
     });
-  })
+  });
 }
+
+async function loadEvents(_, successCallback, failureCallback) {
+  try {
+    let response = await fetch("/api/book/events");
+    let events = await response.json();
+
+    events = events.map((event) => {
+      event.start = new Date(event.start);
+      event.end = new Date(event.end);
+      if (event.owner == room) {
+        event.title = "You, " + event.title.split(" ").slice(2).join(" ");
+        event.editable = true;
+      }
+      return event;
+    });
+    successCallback(events);
+  } catch (error) {
+    failureCallback(error);
+  }
+}
+
+function onResize(info) {
+  let start = calendar.formatIso(info.event.start).slice(0, -6);
+  let end = calendar.formatIso(info.event.end).slice(0, -6);
+  let id = parseInt(info.event.id, 10);
+  console.log(start, end, id);
+
+  Swal.fire({
+    title: 'Reschedule Booking',
+    html: `
+      <label for="start">New Start Time:</label>
+      <input type="datetime-local" id="start" name="start" value="${start}" required>
+      <br>
+      <label for="end">New End Time:</label>
+      <input type="datetime-local" id="end" name="end" value="${end}" required>
+    `,
+    showCancelButton: true,
+    confirmButtonText: 'Reschedule',
+    preConfirm: async () => {
+      const start = rfc3339(document.getElementById('start').value);
+      const end = rfc3339(document.getElementById('end').value);
+      reschedule(start, end, id);
+    }
+  });
+
+}
+
+function reschedule(start_str, end_str, id) {
+  const start = rfc3339(start_str);
+  const end = rfc3339(end_str);
+  sendPostRequest("/api/book/change", {
+    start_time: start,
+    end_time: end,
+    id: parseInt(id, 10),
+  }).then((response) => {
+    if (response.ok) {
+      Toast.fire({
+        icon: "success",
+        title: "Booking rescheduled"
+      });
+    } else {
+      response.text().then((errorText) => {
+        Toast.fire({
+          icon: "error",
+          title: "Booking reschedule failed",
+          text: errorText,
+        });
+      });
+    }
+    calendar.refetchEvents();
+  });
+}
+
 
 document.addEventListener("DOMContentLoaded", function () {
   var calendarEl = document.getElementById("calendar-div");
   calendar = new FullCalendar.Calendar(calendarEl, {
     initialView: window.mobilecheck() ? "timeGridDay" : "month",
-    events: '/api/book/events',
+    events: loadEvents,
     height: "100%",
     selectable: true,
     selectMirror: true,
@@ -166,6 +237,8 @@ document.addEventListener("DOMContentLoaded", function () {
     weekNumbers: true,
     selectMinDistance: 10,
     select: calendarSelect,
+    eventResize: onResize,
+    eventDrop: onResize,
     headerToolbar: {
       left: 'today',
       center: 'title',
@@ -223,91 +296,69 @@ document.addEventListener("DOMContentLoaded", function () {
 
 
 async function calendarSelect(info) {
-  if (!logged_in) {
-    if (await showLoginForm() == false) {
-      calendar.unselect();
-      return;
+  let start = calendar.formatIso(info.start).slice(0, -6);
+  let end = calendar.formatIso(info.end).slice(0, -6);
+
+
+  await Swal.fire({
+    title: 'Select Time',
+    html: `
+    <label for="resources-dropdown">Select Resource:</label>
+    <select id="resources-dropdown" class="resources-dropdown" multiple="multiple">
+    </select>
+    <br>
+    <label for="start">Start Time:</label>
+    <input type="datetime-local" id="start" name="start" value="${start}" required>
+    <br>
+    <label for="end">End Time:</label>
+    <input type="datetime-local" id="end" name="end" value="${end}" required>
+    `,
+    showCancelButton: true,
+    confirmButtonText: 'Confirm',
+    confirmButtonColor: '#4BB543',
+    cancelButtonText: 'Cancel',
+    focusConfirm: false,
+    didOpen: async function () {
+      $('.resources-dropdown').select2({
+        dropdownParent: $('#swal2-html-container'),
+        placeholder: "Select resources",
+        width: '200pt',
+        data: await getResources(info),
+      });
     }
-  }
-  await newBooking(info);
+  }).then(async (result) => {
+    if (result.isConfirmed) {
+      let start = rfc3339(document.getElementById("start").value);
+      let end = rfc3339(document.getElementById("end").value);
+      let resources = $('.resources-dropdown').select2('data').map((x) => x.id);
+      await newBooking(start, end, resources);
+    }
+  });
+
 }
 
-var selected = [];
-
-function optionChange() {
-  let dropdown = document.getElementById("resources-dropdown");
-  let value = dropdown.value;
-  console.log(value);
-  selected.push(value);
-}
-
-async function newBooking(info) {
-  return new Promise((resolve, reject) => {
-
-
-    // fill in the form with information of the resources
-    let dropdown = document.getElementById("resources-dropdown");
-    getResources(info).then((resources) => {
-      resources.sort();
-      dropdown.innerHTML = "";
-      resources.forEach((resource) => {
-        let option = document.createElement("option");
-        option.value = resource[0];
-        option.innerHTML = resource[1];
-        dropdown.appendChild(option);
+async function newBooking(start, end, resources) {
+  sendPostRequest("/api/book/new", {
+    start_time: start,
+    end_time: end,
+    resource_names: resources,
+  }).then((response) => {
+    if (response.ok) {
+      Toast.fire({
+        icon: "success",
+        title: "Booking successful"
       });
-    });
-
-    let start = document.getElementById("booking-start");
-    let end = document.getElementById("booking-end");
-    start.value = info.startStr.slice(0, -6);
-    end.value = info.endStr.slice(0, -6);
-
-    let dialog = document.getElementById("create-booking-dialog");
-    dialog.showModal();
-
-    dialog.addEventListener("close", (event) => {
-      calendar.refetchEvents();
-      calendar.unselect();
-    });
-    document.getElementById("create-booking-button").onclick = async () => {
-      const response = await sendPostRequest("/api/book/new", {
-        start_time: rfc3339(start.value),
-        end_time: rfc3339(end.value),
-        resource_names: $('.resources-dropdown').select2('data').map((x) => x.id),
-      });
-
-      if (response.status === 200) {
-        Toast.fire({
-          icon: "success",
-          title: "Booking successful"
-        });
-
-        console.log("Booking successful");
-      } else if (response.status === 401) {
-        const errorText = await response.text();
-        Toast.fire({
-          icon: "error",
-          title: "Booking failed",
-          text: "You need to log in first",
-          // text: errorText,
-        });
-      }
-      else {
-        const errorText = await response.text();
+    } else {
+      response.text().then((errorText) => {
         Toast.fire({
           icon: "error",
           title: "Booking failed",
           text: errorText,
-        })
-      }
-      resolve();
-      dialog.close();
+        });
+      });
     }
-    document.getElementById("cancel-booking-button").onclick = () => {
-      dialog.close();
-      resolve();
-    }
+    calendar.unselect();
+    calendar.refetchEvents();
   });
 }
 
@@ -315,107 +366,195 @@ function onSubmit(token) {
   document.getElementById("demo-form").submit();
 }
 
+function onSignIn(user) {
+  if (logged_in == true) return;
+  document.getElementById("name-plate").innerHTML = "Room " + user.room;
+  document.getElementById("login").innerHTML = "Logout";
+  document.getElementById("login").onclick = logout;
+  username = user.username;
+  room = user.room;
+  logged_in = true;
+  calendar.refetchEvents();
+}
+
+function onSignOut() {
+  if (logged_in == false) return;
+  document.getElementById("name-plate").innerHTML = "";
+  document.getElementById("login").innerHTML = "Login";
+  document.getElementById("login").onclick = showLoginForm;
+  logged_in = false;
+  room = -1;
+  calendar.refetchEvents();
+}
+
 async function check_login() {
   let response = await fetch("/api/login");
   if (response.status === 202) {
     const data = await response.json();
-    document.getElementById("name-plate").innerHTML = "Room " + data.user.room;
-    document.getElementById("login").innerHTML = "Logout";
-    document.getElementById("login").onclick = logout;
-    username = data.user.username;
-    room = data.user.room;
-    logged_in = true;
+    onSignIn(data.user);
   } else if (response.status === 200) { // 200 means not logged in
-    document.getElementById("login").onclick = showLoginForm;
-    document.getElementById("name-plate").innerHTML = "";
-    document.getElementById("login").innerHTML = "Login";
-    logged_in = false
+    onSignOut();
   }
 }
 
 async function handle_event_click(info) {
-  new Promise((resolve, reject) => {
+  //first check that the event is owned by the user
+  let owned = (info.event.extendedProps.owner == room);
 
-    //First check that the event is owned by the user
-    if (info.event.extendedProps.owner != room) {
-      document.getElementById("delete-booking-button").setAttribute("hidden", "");
-    } else {
-      document.getElementById("delete-booking-button").removeAttribute("hidden");
-    }
+  if (owned && new Date(info.event.start) > new Date()) {
+    Swal.fire({
+      titleText: info.event.title.split(" ").slice(1).join(" "),
+      html: `
+        <label for="start">Start Time:</label>
+        <input type="datetime-local" id="start" name="start" value="${info.event.startStr.slice(0, -6)}" required>
+        <br>
+        <label for="end">End Time:</label>
+        <input type="datetime-local" id="end" name="end" value="${info.event.endStr.slice(0, -6)}" required>
+      `,
+      showCancelButton: true,
+      confirmButtonText: 'Reschedule',
+      confirmButtonColor: '#4BB543',
+      showDenyButton: true,
+      denyButtonText: 'Delete',
+      denyButtonColor: 'red',
+    }).then((result) => {
+      if (result.isConfirmed) {
 
+        //assert new start and end times are in the future
 
-    let dialog = document.getElementById("delete-booking-dialog");
-    document.getElementById("delete-booking-header").innerHTML = info.event.title;
-    document.getElementById("change-booking-start").value = info.event.startStr.slice(0, -6);
-    document.getElementById("change-booking-end").value = info.event.endStr.slice(0, -6);
-    dialog.showModal();
+        if (new Date(document.getElementById('start').value) < new Date()) {
+          Toast.fire('Error', 'Start time must be in the future', 'error');
+          return;
+        }
 
-    // document.getElementById("change-booking-button").onclick = async () => {
-    //   dialog.close();
-    //   const response = await sendPostRequest("/api/book/change", {
-    //     start_time: rfc3339(info.event.start),
-    //     end_time: rfc3339(info.event.end),
-    //     resource_name: info.event.resource_name,
-    //     booking_id: info.event.id,
-    //   });
+        if (new Date(document.getElementById('end').value) < new Date()) {
+          Toast.fire('Error', 'End time must be in the future', 'error');
+          return;
+        }
 
-    //   if (response.status === 200) {
-    //     Toast.fire({
-    //       icon: "success",
-    //       title: "Booking changed"
-    //     });
+        //Other checks will be done server-side
 
-    //     console.log("Booking changed");
-    //     resolve();
-    //   } else if (response.status === 401) {
-    //     const errorText = await response.text();
-    //     Toast.fire({
-    //       icon: "error",
-    //       title: "Booking failed",
-    //       text: "You need to log in first",
-    //       // text: errorText,
-    //     });
-    //     resolve();
-    //   }
-    // }
+        const start = rfc3339(document.getElementById('start').value);
+        const end = rfc3339(document.getElementById('end').value);
+        reschedule(start, end, info.event.id);
+      } else if (result.isDenied) {
 
-    document.getElementById("cancel-change-booking-button").onclick = () => {
-      dialog.close();
-      resolve();
-    }
-
-    document.getElementById("delete-booking-button").onclick = async () => {
-      dialog.close();
-      const response = await sendPostRequest("/api/book/delete", {
-        id: info.event.id,
-      });
-
-      if (response.status === 200) {
-        Toast.fire({
-          icon: "success",
-          title: "Booking deleted"
+        sendPostRequest("/api/book/delete", {
+          id: parseInt(info.event.id, 10),
+        }).then((response) => {
+          if (response.ok) {
+            Toast.fire('Success', 'Booking deleted successfully', 'success');
+            calendar.refetchEvents();
+          } else {
+            response.text().then((errorText) => {
+              Toast.fire('Error', 'Booking delete failed: ' + errorText, 'error');
+            });
+          }
         });
-
-        console.log("Booking deleted");
-        calendar.refetchEvents();
-        resolve();
-      } else if (response.status === 401) {
-        const errorText = await response.text();
-        Toast.fire({
-          icon: "error",
-          title: "Booking failed",
-          text: "You need to log in first",
-          // text: errorText,
-        });
-        resolve();
       }
-    }
+    });
+  } else {
+    Swal.fire({
+      title: info.event.title.split(" ").slice(1).join(" "),
+      html: `
+        <label for="start">Start Time:</label>
+        <input type="datetime-local" id="start" name="start" style="cursor: default;" value="${info.event.startStr.slice(0, -6)}" required disabled>
+        <br>
+        <label for="end">End Time:</label>
+        <input type="datetime-local" id="end" name="end" style="cursor: default;" value="${info.event.endStr.slice(0, -6)}" required disabled>
+      `,
+      showCancelButton: false,
+      confirmButtonText: 'OK',
+    });
+  }
 
-    dialog.addEventListener("close", (event) => {
-      document.getElementById("cancel-change-booking-button").click();
-    })
-  })
 }
+
+
+
+// async function handle_event_click(info) {
+//   new Promise((resolve, reject) => {
+
+//     //First check that the event is owned by the user
+//     if (info.event.extendedProps.owner != room) {
+//       document.getElementById("delete-booking-button").setAttribute("hidden", "");
+//     } else {
+//       document.getElementById("delete-booking-button").removeAttribute("hidden");
+//     }
+
+
+//     let dialog = document.getElementById("delete-booking-dialog");
+//     document.getElementById("delete-booking-header").innerHTML = info.event.title;
+//     document.getElementById("change-booking-start").value = info.event.startStr.slice(0, -6);
+//     document.getElementById("change-booking-end").value = info.event.endStr.slice(0, -6);
+//     dialog.showModal();
+
+//     // document.getElementById("change-booking-button").onclick = async () => {
+//     //   dialog.close();
+//     //   const response = await sendPostRequest("/api/book/change", {
+//     //     start_time: rfc3339(info.event.start),
+//     //     end_time: rfc3339(info.event.end),
+//     //     resource_name: info.event.resource_name,
+//     //     booking_id: info.event.id,
+//     //   });
+
+//     //   if (response.status === 200) {
+//     //     Toast.fire({
+//     //       icon: "success",
+//     //       title: "Booking changed"
+//     //     });
+
+//     //     console.log("Booking changed");
+//     //     resolve();
+//     //   } else if (response.status === 401) {
+//     //     const errorText = await response.text();
+//     //     Toast.fire({
+//     //       icon: "error",
+//     //       title: "Booking failed",
+//     //       text: "You need to log in first",
+//     //       // text: errorText,
+//     //     });
+//     //     resolve();
+//     //   }
+//     // }
+
+//     document.getElementById("cancel-change-booking-button").onclick = () => {
+//       dialog.close();
+//       resolve();
+//     }
+
+//     document.getElementById("delete-booking-button").onclick = async () => {
+//       dialog.close();
+//       const response = await sendPostRequest("/api/book/delete", {
+//         id: info.event.id,
+//       });
+
+//       if (response.status === 200) {
+//         Toast.fire({
+//           icon: "success",
+//           title: "Booking deleted"
+//         });
+
+//         console.log("Booking deleted");
+//         calendar.refetchEvents();
+//         resolve();
+//       } else if (response.status === 401) {
+//         const errorText = await response.text();
+//         Toast.fire({
+//           icon: "error",
+//           title: "Booking failed",
+//           text: "You need to log in first",
+//           // text: errorText,
+//         });
+//         resolve();
+//       }
+//     }
+
+//     dialog.addEventListener("close", (event) => {
+//       document.getElementById("cancel-change-booking-button").click();
+//     })
+//   })
+// }
 
 var logged_in = false;
 var username = "";
@@ -465,7 +604,7 @@ async function getResources(info) {
     }
 
 
-    resourceNames.push([key, value.name]);
+    resourceNames.push({ id: key, text: value.name });
   }
   return resourceNames;
 }
