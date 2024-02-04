@@ -177,7 +177,6 @@ impl AuthApp {
 
         let token_id = TokenId::try_from(cookie)?;
 
-        trace!("Checking token: {}", token_id.to_string());
         self.tokens
             .get(&token_id)
             .ok_or("Not logged in")

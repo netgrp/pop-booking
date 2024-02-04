@@ -59,10 +59,19 @@ async fn handle_change_booking(
 ) -> Result<(StatusCode, String), (StatusCode, String)> {
     debug!("Changing booking: {:?}", payload);
     //assert login. This can also be done with middleware, but that is a bit more complicated
-    auth.read()
+    let session = auth
+        .read()
         .await
         .assert_login(cookies)
         .map_err(|e| (StatusCode::UNAUTHORIZED, e))?;
+
+    //check that the user is allowed to delete the booking
+    if !booker.read().await.assert_id(&payload.id, &session) {
+        return Err((
+            StatusCode::FORBIDDEN,
+            "You are not allowed to delete this booking".to_string(),
+        ));
+    }
 
     match booker.write().await.handle_change_booking(payload) {
         Ok(()) => Ok((StatusCode::OK, "Booking changed".to_string())),
@@ -80,10 +89,19 @@ async fn handle_delete(
 ) -> Result<(StatusCode, String), (StatusCode, String)> {
     debug!("Deleting booking: {:?}", payload);
     //assert login. This can also be done with middleware, but that is a bit more complicated
-    auth.read()
+    let session = auth
+        .read()
         .await
         .assert_login(cookies)
         .map_err(|e| (StatusCode::UNAUTHORIZED, e))?;
+
+    //check that the user is allowed to delete the booking
+    if !booker.read().await.assert_id(&payload.id, &session) {
+        return Err((
+            StatusCode::FORBIDDEN,
+            "You are not allowed to delete this booking".to_string(),
+        ));
+    }
 
     match booker.write().await.handle_delete(payload) {
         Ok(()) => Ok((StatusCode::OK, "Booking deleted".to_string())),

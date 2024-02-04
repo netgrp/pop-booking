@@ -39,7 +39,7 @@ pub struct ChangeBooking {
 
 #[derive(Debug, Deserialize)]
 pub struct DeletePayload {
-    pub id: String,
+    pub id: u32,
 }
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Serialize, Deserialize)]
@@ -238,7 +238,7 @@ impl BookingApp {
         #[derive(Serialize)]
         struct Event {
             title: String,
-            id: String,
+            id: u32,
             start: String,
             end: String,
             owner: u16,
@@ -248,12 +248,12 @@ impl BookingApp {
         let bookings_json = self
             .bookings
             .iter()
-            .map(|(id, booking)| Event {
+            .map(|(&id, booking)| Event {
                 title: format!(
                     "Room {}, {}",
                     booking.user.room, self.resources[&booking.resource_name].name
                 ),
-                id: id.to_string(),
+                id,
                 start: booking.start_time.to_rfc3339(),
                 end: booking.end_time.to_rfc3339(),
                 owner: booking.user.room,
@@ -432,13 +432,15 @@ impl BookingApp {
     }
 
     pub fn handle_delete(&mut self, payload: DeletePayload) -> Result<(), String> {
-        let id = payload
-            .id
-            .parse::<u32>()
-            .map_err(|e| format!("Error parsing id: {}", e))?;
+        let id = payload.id;
 
         if !self.bookings.contains_key(&id) {
             return Err("Booking does not exist".to_string());
+        }
+
+        //dont allow deletion of past bookings
+        if self.bookings[&id].start_time < Utc::now() {
+            return Err("Booking is in the past".to_string());
         }
 
         self.bookings.remove(&id);
@@ -457,6 +459,13 @@ impl BookingApp {
         std::fs::write(bookings_path, bookings_content).unwrap();
 
         Ok(())
+    }
+
+    pub fn assert_id(&self, id: &u32, session: &SessionToken) -> bool {
+        if let Some(booking) = self.bookings.get(id) {
+            return booking.user == *session.get_user();
+        }
+        false
     }
 
     fn add_booking(&mut self, id: &u32, booking: Booking) -> Result<(), String> {
