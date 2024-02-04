@@ -408,7 +408,7 @@ impl BookingApp {
                 .filter(|result| result.is_ok())
                 .for_each(|result| {
                     let id = result.as_ref().unwrap();
-                    self.bookings.remove(id);
+                    self.delete_booking(id).unwrap();
                 });
             return Err(format!("Error adding booking"));
         }
@@ -450,6 +450,29 @@ impl BookingApp {
         // }
         debug!("Adding booking: {:?}", booking);
         self.bookings.insert(*id, booking);
+
+        //build bookings json
+        self.cached_resource_json = Some(self.get_event_json().unwrap());
+
+        //save to file
+        let bookings_path = format!(
+            "{}/bookings.json",
+            env::var("BOOKINGS_DIR").map_err(|e| format!("Error getting bookings dir: {}", e))?
+        );
+        info!("Saving bookings to: {}", bookings_path);
+
+        let bookings_content = serde_json::to_string_pretty(&self.bookings).unwrap();
+        std::fs::write(bookings_path, bookings_content).unwrap();
+
+        Ok(())
+    }
+
+    fn delete_booking(&mut self, id: &u32) -> Result<(), String> {
+        if !self.bookings.contains_key(id) {
+            return Err("Booking does not exist".to_string());
+        }
+
+        self.bookings.remove(id);
 
         //build bookings json
         self.cached_resource_json = Some(self.get_event_json().unwrap());
