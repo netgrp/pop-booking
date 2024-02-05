@@ -15,9 +15,8 @@ WORKDIR /app
 COPY . .
 RUN cargo build --release
 
-FROM alpine:latest as runtime
-RUN apk --no-cache add libc6-compat libgcc
+FROM debian:bookworm-slim as runtime
 COPY --from=builder /app/frontend /app/frontend
 COPY --from=builder /app/target/release/backend /app
 WORKDIR /app
-CMD ["sh"]
+ENTRYPOINT ["./backend"]
