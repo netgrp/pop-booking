@@ -177,9 +177,11 @@ dependencies = [
  "anyhow",
  "axum",
  "axum-extra",
+ "base64",
  "chrono",
  "dotenvy",
  "rand",
+ "rand_hc",
  "reqwest",
  "serde",
  "serde_json",
@@ -952,6 +954,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ec0be4795e2f6a28069bec0b5ff3e2ac9bafc99e6a9a7dc3547996c5c816922c"
 dependencies = [
  "getrandom",
+]
+
+[[package]]
+name = "rand_hc"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7b363d4f6370f88d62bf586c80405657bde0f0e1b8945d47d2ad59b906cb4f54"
+dependencies = [
+ "rand_core",
 ]
 
 [[package]]

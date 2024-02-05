@@ -210,44 +210,50 @@ async fn handle_logout(
     Ok(StatusCode::OK)
 }
 
+async fn health_check() -> StatusCode {
+    // TODO: check if anything is actually healthy. But really, if this function is called, we are healthy. No external dependencies
+    StatusCode::OK
+}
+
 fn auth_api(auth_app: Arc<RwLock<AuthApp>>) -> Router {
     Router::new()
         .route("/login", post(hande_login))
         .route("/login", get(check_login))
         .route("/logout", get(handle_logout))
+        .route("/heartbeat", get(health_check))
         .with_state(auth_app)
 }
 
-async fn cookie_helper(
-    cookies: CookieJar,
-    auth_app: Arc<RwLock<AuthApp>>,
-) -> Result<CookieJar, Box<dyn std::error::Error>> {
-    let cookie = cookies.get("SESSION-COOKIE").ok_or("No cookie found")?;
-    let token_id = TokenId::try_from(cookie.value())?;
-    let cookie = auth_app
-        .write()
-        .await
-        .update_token(&token_id)
-        .map_err(|e| format!("Error updating token: {}", e))?;
+// async fn cookie_helper(
+//     cookies: CookieJar,
+//     auth_app: Arc<RwLock<AuthApp>>,
+// ) -> Result<CookieJar, Box<dyn std::error::Error>> {
+//     let cookie = cookies.get("SESSION-COOKIE").ok_or("No cookie found")?;
+//     let token_id = TokenId::try_from(cookie.value())?;
+//     let cookie = auth_app
+//         .write()
+//         .await
+//         .update_token(&token_id)
+//         .map_err(|e| format!("Error updating token: {}", e))?;
 
-    Ok(cookies.add(cookie.into_owned()))
-}
+//     Ok(cookies.add(cookie.into_owned()))
+// }
 
-async fn update_token(
-    State(auth_app): State<Arc<RwLock<AuthApp>>>,
-    cookies: CookieJar,
-    request: Request,
-    next: Next,
-) -> (CookieJar, Response) {
-    trace!("{}, {}", request.method(), request.uri().path());
-    let response = next.run(request).await;
-    (
-        cookie_helper(cookies, auth_app)
-            .await
-            .unwrap_or(CookieJar::new()),
-        response,
-    )
-}
+// async fn update_token(
+//     State(auth_app): State<Arc<RwLock<AuthApp>>>,
+//     cookies: CookieJar,
+//     request: Request,
+//     next: Next,
+// ) -> (CookieJar, Response) {
+//     trace!("{}, {}", request.method(), request.uri().path());
+//     let response = next.run(request).await;
+//     (
+//         cookie_helper(cookies, auth_app)
+//             .await
+//             .unwrap_or(CookieJar::new()),
+//         response,
+//     )
+// }
 
 #[tokio::main]
 async fn main() -> Result<()> {
