@@ -4,6 +4,8 @@ use axum_extra::extract::{
     cookie::{self, Cookie},
     CookieJar,
 };
+use base64::prelude::*;
+use rand::{RngCore, SeedableRng};
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
 use sha1::{Digest, Sha1};
@@ -21,19 +23,17 @@ pub struct LoginPayload {
 }
 
 #[derive(Hash, PartialEq, Eq, Clone, Copy)]
-pub struct TokenId([u8; 32]);
+pub struct TokenId([u8; 60]);
 
 impl std::fmt::Display for TokenId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        for b in self.0.iter() {
-            write!(f, "{:02x}", b)?;
-        }
+        write!(f, "{}", BASE64_STANDARD.encode(&self.0));
         Ok(())
     }
 }
 
-impl From<[u8; 32]> for TokenId {
-    fn from(bytes: [u8; 32]) -> Self {
+impl From<[u8; 60]> for TokenId {
+    fn from(bytes: [u8; 60]) -> Self {
         Self(bytes)
     }
 }
@@ -41,9 +41,9 @@ impl From<[u8; 32]> for TokenId {
 impl TryFrom<Vec<u8>> for TokenId {
     type Error = String;
     fn try_from(bytes: Vec<u8>) -> Result<Self, Self::Error> {
-        let mut token = [0u8; 32];
+        let mut token = [0u8; 60];
         //check that len is 32
-        if bytes.len() != 32 {
+        if bytes.len() != 60 {
             return Err("Invalid token length".to_string());
         }
         token.copy_from_slice(&bytes);
@@ -54,11 +54,10 @@ impl TryFrom<Vec<u8>> for TokenId {
 impl TryFrom<&str> for TokenId {
     type Error = String;
     fn try_from(s: &str) -> Result<Self, Self::Error> {
-        (0..s.len())
-            .step_by(2)
-            .map(|i| u8::from_str_radix(&s[i..i + 2], 16).map_err(|e| e.to_string()))
-            .collect::<Result<Vec<u8>, String>>()
-            .map(Self::try_from)?
+        BASE64_STANDARD
+            .decode(s)
+            .map_err(|e| e.to_string())
+            .and_then(|bytes| Self::try_from(bytes))
     }
 }
 
@@ -76,12 +75,15 @@ impl From<TokenId> for String {
 }
 
 impl TokenId {
-    pub fn to_bytes(&self) -> [u8; 32] {
+    pub fn to_bytes(&self) -> [u8; 60] {
         self.0
     }
 
     pub fn new() -> Self {
-        Self(rand::random::<[u8; 32]>())
+        let mut bytes = [0u8; 60];
+        let mut rng = rand_hc::Hc128Rng::from_entropy();
+        rng.fill_bytes(&mut bytes);
+        Self(bytes)
     }
 }
 
