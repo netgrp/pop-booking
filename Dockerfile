@@ -13,7 +13,7 @@ COPY --from=planner /app/recipe.json recipe.json
 RUN cargo chef cook --release --recipe-path recipe.json
 WORKDIR /app
 COPY . .
-RUN cargo build --release
+RUN cargo build --release --offline
 
 FROM debian:bookworm-slim as runtime
 COPY --from=builder /app/frontend /app/frontend
