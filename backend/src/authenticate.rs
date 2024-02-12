@@ -8,7 +8,7 @@ use base64::prelude::*;
 use chrono::{DateTime, Utc};
 use rand::{RngCore, SeedableRng};
 use reqwest::StatusCode;
-use serde::{Deserialize, Serialize};
+use serde::{de, Deserialize, Serialize};
 use sha1::{Digest, Sha1};
 use std::{collections::HashMap, sync::Arc};
 use std::{env, hash::Hash};
@@ -406,6 +406,32 @@ impl AuthApp {
             tokio::time::sleep(Duration::from_secs(duration + 1)).await;
             let count = app.write().await.clean_expired_tokens();
             info!("Cleaning expired tokens done, removed {} tokens", count);
+        }
+    }
+
+    pub async fn start_timeout_cleanup(app: Arc<RwLock<Self>>) -> Result<()> {
+        //run every day
+        loop {
+            let duration = app
+                .read()
+                .await
+                .timeouts
+                .values()
+                .map(|(timeout, _)| *timeout)
+                .min()
+                .map(|timeout| (timeout - chrono::Utc::now()).num_seconds())
+                .unwrap_or(0)
+                + 24 * 60 * 60
+                + 1;
+            info!("Cleaning timeouts in {} seconds", duration);
+            tokio::time::sleep(Duration::from_secs(duration as u64)).await;
+            //remove timeouts after a day. This means the max timeout is 48 hours
+            let count = app.read().await.timeouts.len();
+            app.write().await.timeouts.retain(|_, (timeout, _)| {
+                *timeout + Duration::from_secs(24 * 60 * 60) > chrono::Utc::now()
+            });
+            let diff = count - app.read().await.timeouts.len();
+            info!("Cleaning timeouts done, removed {} timeouts", diff);
         }
     }
 }

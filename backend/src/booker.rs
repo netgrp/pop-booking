@@ -391,6 +391,11 @@ impl BookingApp {
             return Err("Start time is after end time".to_string());
         }
 
+        //handle empty case
+        if booking.resource_names.is_empty() {
+            return Err("No resources selected".to_string());
+        }
+
         let results = booking
             .resource_names
             .into_iter()

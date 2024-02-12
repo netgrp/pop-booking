@@ -343,6 +343,12 @@ async fn main() -> Result<()> {
         AuthApp::start_token_cleanup(cleaner).await.unwrap();
     });
 
+    let cleaner = auth_app.clone();
+
+    tokio::spawn(async {
+        AuthApp::start_timeout_cleanup(cleaner).await.unwrap();
+    });
+
     let middleware = tower::ServiceBuilder::new()
         .layer(CompressionLayer::new().quality(tower_http::CompressionLevel::Fastest))
         .layer(TimeoutLayer::new(Duration::from_secs(30)))
