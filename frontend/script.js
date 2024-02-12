@@ -125,7 +125,7 @@ async function showLoginForm() {
             return true;
           } else {
             const errorText = await response.text();
-            document.getElementById("nextlogintime").innerHTML = "Login failed, " + errorText;
+            document.getElementById("nextlogintime").innerHTML = errorText;
             return false;
           }
         } catch (error) {

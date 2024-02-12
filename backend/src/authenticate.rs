@@ -8,7 +8,7 @@ use base64::prelude::*;
 use chrono::{DateTime, Utc};
 use rand::{RngCore, SeedableRng};
 use reqwest::StatusCode;
-use serde::{de, Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
 use sha1::{Digest, Sha1};
 use std::{collections::HashMap, sync::Arc};
 use std::{env, hash::Hash};
