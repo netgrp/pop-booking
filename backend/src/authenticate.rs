@@ -12,7 +12,7 @@ use sha1::{Digest, Sha1};
 use std::env;
 use std::{collections::HashMap, sync::Arc};
 use tokio::sync::RwLock;
-use tokio::time::{self, Duration};
+use tokio::time::Duration;
 #[allow(unused_imports)]
 use tracing::{debug, info, trace};
 
@@ -348,9 +348,21 @@ impl AuthApp {
     }
 
     pub async fn start_token_cleanup(app: Arc<RwLock<Self>>) -> Result<()> {
-        let mut interval = time::interval(Duration::from_secs(3600));
         loop {
-            interval.tick().await;
+            let duration = app
+                .read()
+                .await
+                .tokens
+                .values()
+                .map(|token| token.expiry)
+                .min()
+                .map(|expiry| {
+                    let now = chrono::Utc::now().timestamp() as u64;
+                    expiry.saturating_sub(now)
+                })
+                .unwrap_or(24 * 60 * 60);
+            info!("Cleaning expired tokens in {} seconds", duration);
+            tokio::time::sleep(Duration::from_secs(duration + 1)).await;
             let count = app.write().await.clean_expired_tokens();
             info!("Cleaning expired tokens done, removed {} tokens", count);
         }
