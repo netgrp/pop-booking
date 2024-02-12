@@ -96,6 +96,7 @@ async function showLoginForm() {
         <input type="text" id="username" class="swal2-input" placeholder="Username" style="margin: 5pt 5pt" required>
         <label for="password">Password:</label>
         <input type="password" id="password" class="swal2-input" placeholder="Password" style="margin: 5pt 5pt" required>
+        <p id="nextlogintime"></p>
         `,
       showConfirmButton: true,
       showCancelButton: true,
@@ -106,7 +107,6 @@ async function showLoginForm() {
       cancelButtonText: 'Cancel',
       focusConfirm: false,
       preConfirm: async () => {
-
         try {
           const response = await sendPostRequest("/api/login", {
             username: document.getElementById("username").value,
@@ -122,15 +122,11 @@ async function showLoginForm() {
 
             const data = await response.json();
             onSignIn(data.user);
-            resolve(true);
+            return true;
           } else {
             const errorText = await response.text();
-            Toast.fire({
-              icon: "error",
-              title: "Login failed",
-              text: errorText,
-            });
-            resolve(false);
+            document.getElementById("nextlogintime").innerHTML = "Login failed, " + errorText;
+            return false;
           }
         } catch (error) {
           Toast.fire({
@@ -138,7 +134,7 @@ async function showLoginForm() {
             title: "Login failed",
             text: "Something went wrong",
           });
-          resolve(false);
+          return false;
         }
       },
       allowOutsideClick: () => !Swal.isLoading()

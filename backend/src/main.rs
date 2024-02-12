@@ -177,7 +177,7 @@ async fn hande_login(
     State(auth_app): State<Arc<RwLock<AuthApp>>>,
     cookies: CookieJar,
     Json(payload): Json<backend::authenticate::LoginPayload>,
-) -> Result<(StatusCode, CookieJar, Json<SessionToken>), StatusCode> {
+) -> Result<(StatusCode, CookieJar, Json<SessionToken>), (StatusCode, String)> {
     let mut auth_app = auth_app.write().await;
     match auth_app
         .authenticate_user(&payload.username, &payload.password)
@@ -189,10 +189,7 @@ async fn hande_login(
 
             Ok((StatusCode::OK, cookies.add(cookie), Json(session_token)))
         }
-        Err(e) => {
-            debug!("Error logging in: {}", e);
-            Err(StatusCode::INTERNAL_SERVER_ERROR)
-        }
+        Err(e) => Err((StatusCode::INTERNAL_SERVER_ERROR, e)),
     }
 }
 
