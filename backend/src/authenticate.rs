@@ -5,14 +5,15 @@ use axum_extra::extract::{
     CookieJar,
 };
 use base64::prelude::*;
+use chrono::{DateTime, Utc};
 use rand::{RngCore, SeedableRng};
 use reqwest::StatusCode;
-use serde::{Deserialize, Serialize};
+use serde::{de, Deserialize, Serialize};
 use sha1::{Digest, Sha1};
-use std::env;
 use std::{collections::HashMap, sync::Arc};
+use std::{env, hash::Hash};
 use tokio::sync::RwLock;
-use tokio::time::{self, Duration};
+use tokio::time::Duration;
 #[allow(unused_imports)]
 use tracing::{debug, info, trace};
 
@@ -27,8 +28,7 @@ pub struct TokenId([u8; 60]);
 
 impl std::fmt::Display for TokenId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", BASE64_STANDARD.encode(&self.0));
-        Ok(())
+        write!(f, "{}", BASE64_STANDARD.encode(self.0))
     }
 }
 
@@ -57,7 +57,7 @@ impl TryFrom<&str> for TokenId {
         BASE64_STANDARD
             .decode(s)
             .map_err(|e| e.to_string())
-            .and_then(|bytes| Self::try_from(bytes))
+            .and_then(Self::try_from)
     }
 }
 
@@ -107,6 +107,7 @@ impl SessionToken {
 
 pub struct AuthApp {
     tokens: HashMap<TokenId, SessionToken>,
+    timeouts: HashMap<String, (DateTime<Utc>, u16)>,
     client: reqwest::Client,
     hasher: Sha1,
     knet_username: String,
@@ -124,6 +125,7 @@ impl AuthApp {
 
         Ok(AuthApp {
             tokens: HashMap::new(),
+            timeouts: HashMap::new(),
             client,
             hasher,
             knet_api_base_url,
@@ -202,66 +204,104 @@ impl AuthApp {
         username: &str,
         password: &str,
     ) -> Result<(Cookie<'static>, SessionToken), String> {
-        let url = format!(
-            "{}network/user/?username={}",
-            self.knet_api_base_url, username
-        );
+        //check that user isn't timed out
 
-        let response = self
-            .client
-            .get(&url)
-            .basic_auth(&self.knet_username, Some(&self.knet_password))
-            .send()
-            .await
-            .map_err(|_| "Failed to send request")?;
-
-        if response.status() != StatusCode::OK {
-            return Err(format!(
-                "Login failed, no user found for username {}",
-                username
-            ));
+        let now = chrono::Utc::now();
+        if let Some((timeout, _)) = self.timeouts.get(username) {
+            if now < *timeout {
+                return Err(format!(
+                    "Try again in {} seconds",
+                    (*timeout - now).num_seconds()
+                ));
+            }
         }
 
-        //parse response
-        let response = response
-            .json::<serde_json::Value>()
-            .await
-            .map_err(|_| "Failed to parse response")?;
+        let response = 'login_block: {
+            let url = format!(
+                "{}network/user/?username={}",
+                self.knet_api_base_url, username
+            );
 
-        let user_count = response
-            .get("count")
-            .and_then(|count| count.as_u64())
-            .ok_or("Failed to get count from K-Net")?;
+            let response = self
+                .client
+                .get(&url)
+                .basic_auth(&self.knet_username, Some(&self.knet_password))
+                .send()
+                .await
+                .map_err(|_| "Failed to send request")?;
 
-        if user_count != 1 {
-            return Err(format!("Login failed, user count not 1: {}", user_count));
+            if response.status() != StatusCode::OK {
+                break 'login_block Err(format!(
+                    "Login failed, no user found for username {}",
+                    username
+                ));
+            }
+
+            //parse response
+            let response = response
+                .json::<serde_json::Value>()
+                .await
+                .map_err(|_| "Failed to parse response")?;
+
+            let user_count = response
+                .get("count")
+                .and_then(|count| count.as_u64())
+                .ok_or("Failed to get count from K-Net")?;
+
+            if user_count != 1 {
+                break 'login_block Err(format!("Login failed, user count not 1: {}", user_count));
+            }
+
+            let passw_hash = response
+                .get("results")
+                .and_then(|results| results[0].get("password"))
+                .and_then(|password| password.as_str())
+                .ok_or("Failed to get password from K-Net")?;
+
+            let pwd_parts = passw_hash.split('$').collect::<Vec<_>>();
+
+            if pwd_parts.len() != 3 || pwd_parts[0] != "sha1" {
+                break 'login_block Err(format!(
+                    "Login failed, password hash not sha1: {}",
+                    passw_hash
+                ));
+            }
+
+            let hash = format!("{}{}", pwd_parts[1], password);
+            self.hasher.update(hash);
+
+            let hash = format!("{:x}", self.hasher.finalize_reset());
+
+            debug!("Hash: {}", hash);
+            debug!("K-Net hash: {}", pwd_parts[2]);
+            if hash != pwd_parts[2] {
+                break 'login_block Err("Login failed, wrong password".to_string());
+            }
+            Ok::<serde_json::Value, String>(response)
         }
+        .map_err(|e| {
+            debug!(e);
+            //increase timeout
+            let level = self
+                .timeouts
+                .get(username)
+                .map(|(_, level)| *level + 1)
+                .unwrap_or(0);
+            let timeout_duration = std::cmp::min(
+                Duration::from_millis(250) * (1u32 << level),
+                Duration::from_secs(24 * 60 * 60),
+            ); //max 24 hour timeout
+            self.timeouts
+                .insert(username.to_string(), (now + timeout_duration, level));
 
-        let passw_hash = response
-            .get("results")
-            .and_then(|results| results[0].get("password"))
-            .and_then(|password| password.as_str())
-            .ok_or("Failed to get password from K-Net")?;
+            format!(
+                "login failed, try again in {} seconds",
+                timeout_duration.as_secs()
+            )
+        })?;
 
-        let pwd_parts = passw_hash.split('$').collect::<Vec<_>>();
-
-        if pwd_parts.len() != 3 || pwd_parts[0] != "sha1" {
-            return Err(format!(
-                "Login failed, password hash not sha1: {}",
-                passw_hash
-            ));
-        }
-
-        let hash = format!("{}{}", pwd_parts[1], password);
-        self.hasher.update(hash);
-
-        let hash = format!("{:x}", self.hasher.finalize_reset());
-
-        debug!("Hash: {}", hash);
-        debug!("K-Net hash: {}", pwd_parts[2]);
-        if hash != pwd_parts[2] {
-            return Err("Login failed, wrong password".to_string());
-        }
+        //Otherwise the login was successful so we clean the timeout
+        self.timeouts.remove(username);
 
         // generate a token for the user
         let token = TokenId::new();
@@ -311,7 +351,7 @@ impl AuthApp {
             })
             .ok_or("Failed to get room from K-Net")?
             .ok_or("Failed to parse room from K-Net")?
-            .map_err(|e| format!("Failed to parse room from K-Net {}", e))?;
+            .map_err(|_| "Failed to parse room from K-Net".to_string())?;
 
         let session_token = SessionToken {
             user: User::new(username.to_string(), room),
@@ -349,11 +389,49 @@ impl AuthApp {
     }
 
     pub async fn start_token_cleanup(app: Arc<RwLock<Self>>) -> Result<()> {
-        let mut interval = time::interval(Duration::from_secs(3600));
         loop {
-            interval.tick().await;
+            let duration = app
+                .read()
+                .await
+                .tokens
+                .values()
+                .map(|token| token.expiry)
+                .min()
+                .map(|expiry| {
+                    let now = chrono::Utc::now().timestamp() as u64;
+                    expiry.saturating_sub(now)
+                })
+                .unwrap_or(24 * 60 * 60);
+            info!("Cleaning expired tokens in {} seconds", duration);
+            tokio::time::sleep(Duration::from_secs(duration + 1)).await;
             let count = app.write().await.clean_expired_tokens();
             info!("Cleaning expired tokens done, removed {} tokens", count);
+        }
+    }
+
+    pub async fn start_timeout_cleanup(app: Arc<RwLock<Self>>) -> Result<()> {
+        //run every day
+        loop {
+            let duration = app
+                .read()
+                .await
+                .timeouts
+                .values()
+                .map(|(timeout, _)| *timeout)
+                .min()
+                .map(|timeout| (timeout - chrono::Utc::now()).num_seconds())
+                .unwrap_or(0)
+                + 24 * 60 * 60
+                + 1;
+            info!("Cleaning timeouts in {} seconds", duration);
+            tokio::time::sleep(Duration::from_secs(duration as u64)).await;
+            //remove timeouts after a day. This means the max timeout is 48 hours
+            let count = app.read().await.timeouts.len();
+            app.write().await.timeouts.retain(|_, (timeout, _)| {
+                *timeout + Duration::from_secs(24 * 60 * 60) > chrono::Utc::now()
+            });
+            let diff = count - app.read().await.timeouts.len();
+            info!("Cleaning timeouts done, removed {} timeouts", diff);
         }
     }
 }

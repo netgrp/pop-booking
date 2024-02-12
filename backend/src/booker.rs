@@ -315,7 +315,7 @@ impl BookingApp {
                     } else if target >= start && target <= end {
                         return true;
                     }
-                    return false;
+                    false
                 };
 
                 if is_in_range(
@@ -391,6 +391,11 @@ impl BookingApp {
             return Err("Start time is after end time".to_string());
         }
 
+        //handle empty case
+        if booking.resource_names.is_empty() {
+            return Err("No resources selected".to_string());
+        }
+
         let results = booking
             .resource_names
             .into_iter()
@@ -425,7 +430,7 @@ impl BookingApp {
                     let id = result.as_ref().unwrap();
                     self.delete_booking(id).unwrap();
                 });
-            return Err(format!("Error adding booking"));
+            return Err("Error adding booking".to_string());
         }
 
         Ok("Booking successful".to_string())
