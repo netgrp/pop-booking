@@ -180,6 +180,7 @@ dependencies = [
  "base64",
  "chrono",
  "dotenvy",
+ "http-body-util",
  "rand",
  "rand_hc",
  "reqwest",

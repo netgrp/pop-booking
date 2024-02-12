@@ -315,7 +315,7 @@ impl BookingApp {
                     } else if target >= start && target <= end {
                         return true;
                     }
-                    return false;
+                    false
                 };
 
                 if is_in_range(
@@ -425,7 +425,7 @@ impl BookingApp {
                     let id = result.as_ref().unwrap();
                     self.delete_booking(id).unwrap();
                 });
-            return Err(format!("Error adding booking"));
+            return Err("Error adding booking".to_string());
         }
 
         Ok("Booking successful".to_string())

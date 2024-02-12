@@ -95,7 +95,9 @@ async function showLoginForm() {
         <label for="username">Username:</label>
         <input type="text" id="username" class="swal2-input" placeholder="Username" style="margin: 5pt 5pt" required>
         <label for="password">Password:</label>
-        <input type="password" id="password" class="swal2-input" placeholder="Password" style="margin: 5pt 5pt" required>`,
+        <input type="password" id="password" class="swal2-input" placeholder="Password" style="margin: 5pt 5pt" required>
+        `,
+      showConfirmButton: true,
       showCancelButton: true,
       padding: '1em',
       confirmButtonText: 'Login',
@@ -104,6 +106,7 @@ async function showLoginForm() {
       cancelButtonText: 'Cancel',
       focusConfirm: false,
       preConfirm: async () => {
+
         try {
           const response = await sendPostRequest("/api/login", {
             username: document.getElementById("username").value,
@@ -200,7 +203,7 @@ function onResize(info) {
 function reschedule(start_str, end_str, id) {
   const start = rfc3339(start_str);
   const end = rfc3339(end_str);
-  sendPostRequest("/api/book/change", {
+  sendPostRequest("/api/book/secure/change", {
     start_time: start,
     end_time: end,
     id: parseInt(id, 10),
@@ -338,7 +341,7 @@ async function calendarSelect(info) {
 }
 
 async function newBooking(start, end, resources) {
-  sendPostRequest("/api/book/new", {
+  sendPostRequest("/api/book/secure/new", {
     start_time: start,
     end_time: end,
     resource_names: resources,
@@ -439,7 +442,7 @@ async function handle_event_click(info) {
         reschedule(start, end, info.event.id);
       } else if (result.isDenied) {
 
-        sendPostRequest("/api/book/delete", {
+        sendPostRequest("/api/book/secure/delete", {
           id: parseInt(info.event.id, 10),
         }).then((response) => {
           if (response.ok) {
@@ -455,7 +458,7 @@ async function handle_event_click(info) {
     });
   } else {
     Swal.fire({
-      title: info.event.title.split(" ").slice(1).join(" "),
+      title: info.event.title,
       html: `
         <label for="start">Start Time:</label>
         <input type="datetime-local" id="start" name="start" style="cursor: default;" value="${info.event.startStr.slice(0, -6)}" required disabled>
@@ -465,6 +468,7 @@ async function handle_event_click(info) {
       `,
       showCancelButton: false,
       confirmButtonText: 'OK',
+      confirmButtonColor: '#4BB543'
     });
   }
 

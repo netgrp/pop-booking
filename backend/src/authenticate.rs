@@ -27,8 +27,7 @@ pub struct TokenId([u8; 60]);
 
 impl std::fmt::Display for TokenId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", BASE64_STANDARD.encode(&self.0));
-        Ok(())
+        write!(f, "{}", BASE64_STANDARD.encode(self.0))
     }
 }
 
@@ -57,7 +56,7 @@ impl TryFrom<&str> for TokenId {
         BASE64_STANDARD
             .decode(s)
             .map_err(|e| e.to_string())
-            .and_then(|bytes| Self::try_from(bytes))
+            .and_then(Self::try_from)
     }
 }
 
