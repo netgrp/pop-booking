@@ -1,6 +1,6 @@
-FROM rust:slim-buster as chef
-RUN apt update && apt install -y pkg-config libssl-dev
-RUN cargo install cargo-chef 
+FROM docker.io/rustlang/rust:nightly-alpine as chef
+RUN apk add --no-cache pkgconf openssl-dev musl-dev
+RUN cargo install cargo-chef
 WORKDIR /app
 
 FROM chef as planner
@@ -15,7 +15,7 @@ WORKDIR /app
 COPY . .
 RUN cargo build --release --offline
 
-FROM debian:bookworm-slim as runtime
+FROM docker.io/alpine:latest as runtime
 COPY --from=builder /app/frontend /app/frontend
 COPY --from=builder /app/target/release/backend /app
 WORKDIR /app
