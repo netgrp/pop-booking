@@ -50,6 +50,8 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - run: echo "registry ${{ env.REGISTRY }}"
+
       - run: cargo build --release
 
       - name: Build Image
