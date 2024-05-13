@@ -1,17 +1,7 @@
-FROM rust:slim-buster as chef
+FROM rust:slim-buster as builder
 RUN apt update && apt install -y pkg-config libssl-dev
-RUN cargo install cargo-chef 
 WORKDIR /app
 
-FROM chef as planner
-COPY . .
-RUN cargo chef prepare  --recipe-path recipe.json
-
-FROM chef as builder
-COPY vendor /app/vendor
-COPY --from=planner /app/recipe.json recipe.json
-RUN cargo chef cook --release --recipe-path recipe.json
-WORKDIR /app
 COPY . .
 RUN cargo build --release --offline
 
