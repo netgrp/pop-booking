@@ -50,6 +50,8 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - run: cargo build --release
+
       - name: Build Image
         id: build-image
         uses: redhat-actions/buildah-build@v2
@@ -59,7 +61,7 @@ jobs:
           containerfiles: |
             ./Dockerfile
 
-      - name: Push To quay.io
+      - name: Push To Docker Registry
         id: push-to-quay
         uses: redhat-actions/push-to-registry@v2
         with:
