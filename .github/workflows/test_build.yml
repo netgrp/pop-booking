@@ -32,10 +32,13 @@ jobs:
           command: build
           args: --all --release
 
-      - name: Prepare amd64 binary
-        run: |
-          mv target/release/backend target/release/backend_amd64
-          chmod +x target/release/backend_amd64
+      - run: mv target/release/backend target/release/backend_amd64
+
+      - name: upload binary
+        uses: actions/upload-artifact@v2
+        with:
+          name: backend_amd64
+          path: target/release/backend_amd64
           
   build_arm64:
     name: arm64 build
@@ -60,10 +63,13 @@ jobs:
           command: build
           args: --all --release --target=aarch64-unknown-linux-musl
 
-      - name: Prepare arm64 Binary
-        run: |
-          mv target/aarch64-unknown-linux-musl/release/backend target/release/backend_arm64
-          chmod +x target/release/backend_arm64
+      - run: mv target/aarch64-unknown-linux-musl/release/backend target/release/backend_arm64
+
+      - name: upload binary
+        uses: actions/upload-artifact@v2
+        with:
+          name: backend_arm64
+          path: target/release/backend_arm64
 
   publish:
     needs: [build_amd64, build_arm64]
@@ -110,6 +116,18 @@ jobs:
               type=semver,pattern={{version}}
               type=semver,pattern={{major}}
               type=sha
+
+      - name: download amd64 binary
+        uses: actions/download-artifact@v2
+        with:
+          name: backend_amd64
+          path: target/release/backend_amd64
+
+      - name: download arm64 binary 
+        uses: actions/download-artifact@v2
+        with:
+          name: backend_arm64
+          path: target/release/backend_arm64
 
       - name: Build and push Docker image
         uses: docker/build-push-action@v5
