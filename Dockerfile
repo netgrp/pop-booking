@@ -7,7 +7,8 @@ COPY backend_${TARGETARCH} /app
 WORKDIR /app
 RUN chmod +x backend_${TARGETARCH}
 
-RUN echo "#/bin/bash \n ./backend_${TARGETARCH}" > /app/start.sh
+RUN echo $'#/bin/bash\n\
+    ./backend_${TARGETARCH}' > /app/start.sh
 RUN chmod +x /app/start.sh
 
 ENTRYPOINT [ "/app/start.sh" ]
