@@ -40,7 +40,7 @@ jobs:
         with:
           context: .
           push: true
-          tags: ${{ steps.meta.outputs.tags }}
+          tags: linux/amd64 ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           provenance: false
           platforms: linux/amd64
@@ -63,7 +63,7 @@ jobs:
         uses: redhat-actions/buildah-build@v2
         with:
           image: ${{ env.IMAGE_NAME }}
-          tags: latest aarch64 ${{ github.sha }}
+          tags: aarch64 ${{ github.sha }}
           platform: linux/arm64
           containerfiles: |
             ./Dockerfile
