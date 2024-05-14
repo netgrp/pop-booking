@@ -118,18 +118,9 @@ jobs:
               type=semver,pattern={{major}}
               type=sha
 
-      - name: download amd64 binary
+      - name: Download all workflow run artifacts
         uses: actions/download-artifact@v4
-        with:
-          name: backend_amd64
-          path: target/release/backend_amd64
-
-      - name: download arm64 binary 
-        uses: actions/download-artifact@v4
-        with:
-          name: backend_arm64
-          path: target/release/backend_arm64
-
+        
       - name: Build and push Docker image
         uses: docker/build-push-action@v5
         with:
