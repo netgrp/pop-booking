@@ -43,6 +43,7 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           provenance: false
+          platforms: linux/amd64
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -63,13 +64,14 @@ jobs:
         with:
           image: ${{ env.IMAGE_NAME }}
           tags: latest aarch64 ${{ github.sha }}
+          platform: linux/arm64
           containerfiles: |
             ./Dockerfile
 
       - name: Push To ghcr Registry
         uses: redhat-actions/push-to-registry@v2
         with:
-          image: ${{ github.repository }}
+          image: ${{ env.IMAGE_NAME }}
           tags: ${{ steps.build-image.outputs.tags }}
           registry: ${{ env.REGISTRY }}/${{ github.repository_owner }} 
           username: ${{ github.actor }}
