@@ -388,7 +388,7 @@ impl AuthApp {
         count
     }
 
-    pub async fn start_token_cleanup(app: Arc<RwLock<Self>>) -> Result<()> {
+    pub async fn start_token_cleanup(app: Arc<RwLock<Self>>) {
         loop {
             let duration = app
                 .read()
@@ -409,7 +409,7 @@ impl AuthApp {
         }
     }
 
-    pub async fn start_timeout_cleanup(app: Arc<RwLock<Self>>) -> Result<()> {
+    pub async fn start_timeout_cleanup(app: Arc<RwLock<Self>>) {
         //run every day
         loop {
             let duration = app

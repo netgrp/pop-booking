@@ -340,13 +340,13 @@ async fn main() -> Result<()> {
     let cleaner = auth_app.clone();
 
     tokio::spawn(async {
-        AuthApp::start_token_cleanup(cleaner).await.unwrap();
+        AuthApp::start_token_cleanup(cleaner).await;
     });
 
     let cleaner = auth_app.clone();
 
     tokio::spawn(async {
-        AuthApp::start_timeout_cleanup(cleaner).await.unwrap();
+        AuthApp::start_timeout_cleanup(cleaner).await;
     });
 
     let middleware = tower::ServiceBuilder::new()
