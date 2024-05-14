@@ -66,6 +66,7 @@ jobs:
           chmod +x target/release/backend_arm64
 
   publish:
+    needs: [build_amd64, build_arm64]
     name: Publish Docker Image
     runs-on: ubuntu-latest
     strategy:
