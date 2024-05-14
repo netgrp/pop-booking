@@ -35,7 +35,7 @@ jobs:
       - run: mv target/release/backend target/release/backend_amd64
 
       - name: upload binary
-        uses: actions/upload-artifact@v2
+        uses: actions/upload-artifact@v4
         with:
           name: backend_amd64
           path: target/release/backend_amd64
