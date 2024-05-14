@@ -7,7 +7,7 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: pop-booking
+  IMAGE_NAME: ${{ github.repository }}
 
 jobs:
   build_amd64:
