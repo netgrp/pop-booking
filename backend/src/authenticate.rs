@@ -176,27 +176,18 @@ impl AuthApp {
                 trace!("cookie not found: {}", e);
                 "Not logged in"
             })?
-            .value()
-            .to_string();
+            .value();
 
         let token_id = TokenId::try_from(cookie)?;
 
-        self.tokens
-            .get(&token_id)
-            .ok_or("Not logged in")
-            .map_err(|e| {
-                trace!("token not found: {}", e);
-                "Not logged in"
-            })?
-            .expiry
-            .checked_sub(chrono::Utc::now().timestamp() as u64)
-            .ok_or("Token expired")
-            .map_err(|e| {
-                trace!("token expired: {}", e);
-                "Not logged in"
-            })?;
-
-        Ok(self.tokens.get(&token_id).unwrap().clone())
+        if let Some(token) = self.tokens.get(&token_id) {
+            if token.expiry <= chrono::Utc::now().timestamp() as u64 {
+                return Err("Token expired".to_string());
+            }
+            return Ok(token.clone());
+        } else {
+            return Err("Not logged in".to_string());
+        }
     }
 
     pub async fn authenticate_user(
