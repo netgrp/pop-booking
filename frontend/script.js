@@ -238,8 +238,21 @@ document.addEventListener("DOMContentLoaded", function () {
     select: calendarSelect,
     eventResize: onResize,
     eventDrop: onResize,
+    customButtons: {
+      newBookingButton: {
+        text: 'Create Booking',
+        click: function () {
+          let now = new Date();
+          now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
+          now.setDate(now.getDate() + 1);
+          let start = now.toISOString().slice(0, -8);
+          let end = new Date(now.getTime() + 3600000).toISOString().slice(0, -8);
+          bookingPopup(start, end);
+        }
+      }
+    },
     headerToolbar: {
-      left: 'today',
+      left: 'today newBookingButton',
       center: 'title',
       right: 'month,timeGridWeek,timeGridDay,prev,next'
     },
@@ -261,6 +274,14 @@ document.addEventListener("DOMContentLoaded", function () {
         type: 'timeGrid',
         allDaySlot: false,
         slotDuration: '00:15:00',
+        dateClick: (info) => {
+          let start = new Date(info.date.getTime());
+          start.setMinutes(start.getMinutes() - start.getTimezoneOffset());
+          let end = new Date(info.date.getTime() + 3600000);
+          end.setMinutes(end.getMinutes() - end.getTimezoneOffset());
+
+          bookingPopup(start.toISOString().slice(0, -8), end.toISOString().slice(0, -8));
+        },
         slotLabelInterval: '01:00',
         buttonText: 'Week',
         nowIndicator: true,
@@ -276,6 +297,14 @@ document.addEventListener("DOMContentLoaded", function () {
         type: 'timeGrid',
         allDaySlot: false,
         slotDuration: '00:15:00',
+        dateClick: (info) => {
+          let start = new Date(info.date.getTime());
+          start.setMinutes(start.getMinutes() - start.getTimezoneOffset());
+          let end = new Date(info.date.getTime() + 3600000);
+          end.setMinutes(end.getMinutes() - end.getTimezoneOffset());
+
+          bookingPopup(start.toISOString().slice(0, -8), end.toISOString().slice(0, -8));
+        },
         slotLabelInterval: '01:00',
         buttonText: 'Day',
         nowIndicator: true,
@@ -298,7 +327,10 @@ async function calendarSelect(info) {
   let start = calendar.formatIso(info.start).slice(0, -6);
   let end = calendar.formatIso(info.end).slice(0, -6);
 
+  bookingPopup(start, end);
+}
 
+async function bookingPopup(start, end) {
   await Swal.fire({
     title: 'Select Time',
     html: `
@@ -322,7 +354,7 @@ async function calendarSelect(info) {
         dropdownParent: $('#swal2-html-container'),
         placeholder: "Select resources",
         width: '200pt',
-        data: await getResources(info),
+        data: await getResources(start, end),
       });
     }
   }).then(async (result) => {
@@ -333,7 +365,6 @@ async function calendarSelect(info) {
       await newBooking(start, end, resources);
     }
   });
-
 }
 
 async function newBooking(start, end, resources) {
@@ -478,7 +509,7 @@ setInterval(async function () {
   await check_login();
 }, 10000);
 
-async function getResources(info) {
+async function getResources(start, end) {
   const response = await fetch('api/book/resources');
   const resources = await response.json();
   // return a list of resource name strings
@@ -504,8 +535,12 @@ async function getResources(info) {
           return false;
         }
 
-        if ((is_in_range(dates.start, dates.end, [info.start.getMonth() + 1, info.start.getDate()])) ||
-          (is_in_range(dates.start, dates.end, [info.end.getMonth() + 1, info.end.getDate()]))) {
+        let startmonth = parseInt(start.split("-")[1]);
+        let startday = parseInt(start.split("-")[2].split("T")[0]);
+        let endmonth = parseInt(end.split("-")[1]);
+        let endday = parseInt(end.split("-")[2].split("T")[0]);
+        if ((is_in_range(dates.start, dates.end, [startmonth + 1, startday])) ||
+          (is_in_range(dates.start, dates.end, [endmonth + 1, endday]))) {
           continue outer;
         }
 
@@ -516,6 +551,17 @@ async function getResources(info) {
     resourceNames.push({ id: key, text: value.name });
   }
   return resourceNames;
+}
+
+function isoToDate(iso) {
+  //2024-05-29T18:00:00
+  let date = new Date();
+  date.setFullYear(parseInt(iso.slice(0, 4)));
+  date.setMonth(parseInt(iso.slice(5, 7)) - 1);
+  date.setDate(parseInt(iso.slice(8, 10)));
+  date.setHours(parseInt(iso.slice(11, 13)));
+  date.setMinutes(parseInt(iso.slice(14, 16)));
+  return date;
 }
 
 function rfc3339(d) {
