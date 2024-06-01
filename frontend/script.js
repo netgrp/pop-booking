@@ -378,7 +378,17 @@ async function newBooking(start, end, resources) {
         icon: "success",
         title: "Booking successful"
       });
-    } else {
+    }
+    else if (response.status === 401) {
+      response.text().then((errorText) => {
+        Toast.fire({
+          icon: "error",
+          title: "Login required",
+        });
+      });
+    }
+
+    else {
       response.text().then((errorText) => {
         Toast.fire({
           icon: "error",
