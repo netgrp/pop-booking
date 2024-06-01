@@ -395,8 +395,8 @@ impl BookingApp {
                     .filter(|prior_booking| prior_booking.end_time > now)
                     .count();
 
-                if user_bookings > 2 {
-                    return Err("User has more than 2 bookings in the future. Not allowed for the meeting room.".to_string());
+                if user_bookings >= 2 {
+                    return Err("Attempt to create more than 2 bookings in the future. Not allowed for the meeting room.".to_string());
                 }
             }
         }
