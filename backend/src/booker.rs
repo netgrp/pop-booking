@@ -7,7 +7,7 @@ use serde_json::{self};
 use std::collections::HashMap;
 use std::env;
 use std::hash::{Hash, Hasher};
-use tracing::{debug, error, info};
+use tracing::{debug, info};
 
 #[derive(Debug, Deserialize)]
 pub struct NewBooking {
@@ -391,8 +391,8 @@ impl BookingApp {
                 let user_bookings = self
                     .bookings
                     .values()
-                    .filter(|booking| booking.user == booking.user)
-                    .filter(|booking| booking.end_time > now)
+                    .filter(|prior_booking| prior_booking.user == booking.user)
+                    .filter(|prior_booking| prior_booking.end_time > now)
                     .count();
 
                 if user_bookings > 2 {
