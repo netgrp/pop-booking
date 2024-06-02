@@ -3,7 +3,7 @@ use crate::hourmin::HourMin;
 use anyhow::{anyhow, Result};
 use chrono::{DateTime, Datelike, Utc};
 use serde::{Deserialize, Serialize};
-use serde_json;
+use serde_json::{self};
 use std::collections::HashMap;
 use std::env;
 use std::hash::{Hash, Hasher};
@@ -373,6 +373,34 @@ impl BookingApp {
             return Err("Booking overlaps with another booking".to_string());
         }
 
+        // Hack to insert meetingroom rule. A real solution is an interpretable scripting language
+        // for defining rules :/ Not really feasible though. Otherwise configs should be read at compile time,
+        // but that's not really feasible either.
+        if booking.resource_name == "meetingroom" {
+            // 1: Check booking is within 3 weeks
+            let now = Utc::now();
+            let three_weeks = now + chrono::Duration::weeks(3);
+            if booking.start_time > three_weeks {
+                return Err(
+                    "Booking is more than 3 weeks in the future. Not allowed for the meeting room."
+                        .to_string(),
+                );
+            }
+            // 2: check that no more than 2 bookings are made in the future by the same user
+            else {
+                let user_bookings = self
+                    .bookings
+                    .values()
+                    .filter(|prior_booking| prior_booking.user == booking.user)
+                    .filter(|prior_booking| prior_booking.end_time > now)
+                    .count();
+
+                if user_bookings >= 2 {
+                    return Err("Attempt to create more than 2 bookings in the future. Not allowed for the meeting room.".to_string());
+                }
+            }
+        }
+
         Ok(())
     }
 
@@ -430,7 +458,13 @@ impl BookingApp {
                     let id = result.as_ref().unwrap();
                     self.delete_booking(id).unwrap();
                 });
-            return Err("Error adding booking".to_string());
+            // compile error string
+            return Err(results
+                .iter()
+                .filter(|result| result.is_err())
+                .map(|result| result.as_ref().unwrap_err().clone())
+                .collect::<Vec<String>>()
+                .join(", "));
         }
 
         Ok("Booking successful".to_string())

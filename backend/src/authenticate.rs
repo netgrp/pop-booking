@@ -184,9 +184,9 @@ impl AuthApp {
             if token.expiry <= chrono::Utc::now().timestamp() as u64 {
                 return Err("Token expired".to_string());
             }
-            return Ok(token.clone());
+            Ok(token.clone())
         } else {
-            return Err("Not logged in".to_string());
+            Err("Not logged in".to_string())
         }
     }
 
