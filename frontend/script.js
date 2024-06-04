@@ -349,6 +349,9 @@ async function bookingPopup(start, end) {
     confirmButtonColor: '#4BB543',
     cancelButtonText: 'Cancel',
     focusConfirm: false,
+    didDestroy: () => {
+      calendar.unselect();
+    },
     didOpen: async function () {
       $('.resources-dropdown').select2({
         dropdownParent: $('#swal2-html-container'),
