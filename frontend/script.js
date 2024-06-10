@@ -349,9 +349,6 @@ async function bookingPopup(start, end) {
     confirmButtonColor: '#4BB543',
     cancelButtonText: 'Cancel',
     focusConfirm: false,
-    didDestroy: () => {
-      calendar.unselect();
-    },
     didOpen: async function () {
       $('.resources-dropdown').select2({
         dropdownParent: $('#swal2-html-container'),
@@ -367,6 +364,7 @@ async function bookingPopup(start, end) {
       let resources = $('.resources-dropdown').select2('data').map((x) => x.id);
       await newBooking(start, end, resources);
     }
+    calendar.unselect();
   });
 }
 
