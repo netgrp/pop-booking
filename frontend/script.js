@@ -364,6 +364,7 @@ async function bookingPopup(start, end) {
       let resources = $('.resources-dropdown').select2('data').map((x) => x.id);
       await newBooking(start, end, resources);
     }
+    calendar.unselect();
   });
 }
 
@@ -440,7 +441,7 @@ async function check_login() {
 async function handle_event_click(info) {
   //first check that the event is owned by the user
   let owned = (info.event.extendedProps.owner == room);
-
+  let confirmed = false;
   if (owned && new Date(info.event.start) > new Date()) {
     Swal.fire({
       titleText: info.event.title.split(" ").slice(1).join(" "),
@@ -455,8 +456,17 @@ async function handle_event_click(info) {
       confirmButtonText: 'Reschedule',
       confirmButtonColor: '#4BB543',
       showDenyButton: true,
-      denyButtonText: 'Delete',
+      denyButtonText: confirmed ? 'Are you sure?' : 'Delete',
       denyButtonColor: 'red',
+      preDeny: () => {
+        // confirm deletion
+        if (!confirmed) {
+          confirmed = true;
+          Swal.getDenyButton().textContent = "Are you sure?"
+          return false;
+        }
+        return true;
+      }
     }).then((result) => {
       if (result.isConfirmed) {
 
@@ -490,7 +500,7 @@ async function handle_event_click(info) {
               Toast.fire('Error', 'Booking delete failed: ' + errorText, 'error');
             });
           }
-        });
+        })
       }
     });
   } else {

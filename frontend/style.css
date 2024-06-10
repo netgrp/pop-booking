@@ -97,6 +97,14 @@ input {
   border: none !important;
 }
 
+.swal2-actions {
+  z-index: 0;
+}
+
+.select2-container {
+  z-index: 9999;
+}
+
 [hidden] {
   display: none !important;
 }
