@@ -1,7 +1,8 @@
-use std::borrow::Borrow;
+use alloc::collections::VecDeque;
+use core::borrow::Borrow;
+use core::hash::Hash;
 use std::collections::hash_map::Entry;
-use std::collections::{HashMap, VecDeque};
-use std::hash::Hash;
+use std::collections::HashMap;
 
 /// A HashMap-alike, which never gets larger than a specified
 /// capacity, and evicts the oldest insertion to maintain this.
@@ -20,7 +21,7 @@ pub(crate) struct LimitedCache<K: Clone + Hash + Eq, V> {
 
 impl<K, V> LimitedCache<K, V>
 where
-    K: Eq + Hash + Clone + std::fmt::Debug,
+    K: Eq + Hash + Clone + core::fmt::Debug,
     V: Default,
 {
     /// Create a new LimitedCache with the given rough capacity.
@@ -56,7 +57,7 @@ where
     pub(crate) fn insert(&mut self, k: K, v: V) {
         let inserted_new_item = match self.map.entry(k) {
             Entry::Occupied(mut old) => {
-                // nb. does not freshen entry in `oldest`
+                // Note: does not freshen entry in `oldest`
                 old.insert(v);
                 false
             }
@@ -77,26 +78,23 @@ where
         }
     }
 
-    pub(crate) fn get<Q: ?Sized>(&self, k: &Q) -> Option<&V>
+    pub(crate) fn get<Q: Hash + Eq + ?Sized>(&self, k: &Q) -> Option<&V>
     where
         K: Borrow<Q>,
-        Q: Hash + Eq,
     {
         self.map.get(k)
     }
 
-    pub(crate) fn get_mut<Q: ?Sized>(&mut self, k: &Q) -> Option<&mut V>
+    pub(crate) fn get_mut<Q: Hash + Eq + ?Sized>(&mut self, k: &Q) -> Option<&mut V>
     where
         K: Borrow<Q>,
-        Q: Hash + Eq,
     {
         self.map.get_mut(k)
     }
 
-    pub(crate) fn remove<Q: ?Sized>(&mut self, k: &Q) -> Option<V>
+    pub(crate) fn remove<Q: Hash + Eq + ?Sized>(&mut self, k: &Q) -> Option<V>
     where
         K: Borrow<Q>,
-        Q: Hash + Eq,
     {
         if let Some(value) = self.map.remove(k) {
             // O(N) search, followed by O(N) removal
@@ -115,7 +113,9 @@ where
 }
 
 #[cfg(test)]
-mod test {
+mod tests {
+    use std::prelude::v1::*;
+
     type Test = super::LimitedCache<String, usize>;
 
     #[test]

@@ -1,31 +1,38 @@
 #![forbid(unsafe_code)]
 #![allow(clippy::type_complexity)]
+use aide::{
+    axum::{
+        routing::{get, post},
+        ApiRouter,
+    },
+    openapi::{Info, OpenApi},
+    redoc::Redoc,
+};
 use anyhow::Result;
 use axum::{
     body::Body,
     debug_handler,
-    extract::{self, Json, Request, State},
+    extract::{Request, State},
     http::{header::CONTENT_TYPE, StatusCode},
     middleware::{self, Next},
     response::Response,
-    routing::{get, post},
-    Router,
+    Extension, Json,
 };
 use axum_extra::extract::cookie::CookieJar;
 use backend::{
     authenticate::SessionToken,
-    booker::{BookingApp, DeletePayload, NewBooking},
+    booker::{self, BookingApp, DeletePayload, NewBooking},
 };
 use backend::{
     authenticate::{AuthApp, TokenId},
     booker::ChangeBooking,
 };
 use http_body_util::BodyExt;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
-use std::env;
 use std::sync::Arc;
 use std::time::Duration;
+use std::{collections::HashMap, env};
 use tokio::sync::RwLock;
 use tower_http::services::ServeDir;
 use tower_http::{
@@ -34,32 +41,41 @@ use tower_http::{
 use tracing::{debug, error, info};
 use tracing_subscriber::filter::EnvFilter;
 
+#[derive(Deserialize, JsonSchema, Debug)]
+struct NewBookingPayload {
+    session: SessionToken,
+    request: NewBooking,
+}
+
 #[debug_handler]
 async fn handle_new_booking(
     State(booker): State<Arc<RwLock<BookingApp>>>,
-    extract::Json(payload): extract::Json<Value>,
+    Json(payload): Json<NewBookingPayload>,
 ) -> Result<(StatusCode, String), (StatusCode, String)> {
     debug!("Creating new booking: {:?}", payload);
-    debug!("Parsing payload: {:?}", payload);
 
-    let session: SessionToken =
-        serde_json::from_value(payload["session"].clone()).map_err(|e| {
-            error!("Error parsing session token: {}", e);
-            (
-                StatusCode::BAD_REQUEST,
-                "Error parsing session token".to_string(),
-            )
-        })?;
+    // let session: SessionToken =
+    //     serde_json::from_value(payload["session"].clone()).map_err(|e| {
+    //         error!("Error parsing session token: {}", e);
+    //         (
+    //             StatusCode::BAD_REQUEST,
+    //             "Error parsing session token".to_string(),
+    //         )
+    //     })?;
 
-    let payload: NewBooking = serde_json::from_value(payload["request"].clone()).map_err(|e| {
-        error!("Error parsing delete payload: {}", e);
-        (
-            StatusCode::BAD_REQUEST,
-            "Error parsing delete payload".to_string(),
-        )
-    })?;
+    // let payload: NewBooking = serde_json::from_value(payload["request"].clone()).map_err(|e| {
+    //     error!("Error parsing delete payload: {}", e);
+    //     (
+    //         StatusCode::BAD_REQUEST,
+    //         "Error parsing delete payload".to_string(),
+    //     )
+    // })?;
 
-    match booker.write().await.handle_new_booking(payload, session) {
+    match booker
+        .write()
+        .await
+        .handle_new_booking(payload.request, payload.session)
+    {
         Ok(id) => Ok((StatusCode::OK, id)),
         Err(e) => {
             error!("Error creating new booking: {}", e);
@@ -68,40 +84,48 @@ async fn handle_new_booking(
     }
 }
 
+#[derive(Deserialize, JsonSchema, Debug)]
+struct ChangeBookingPayload {
+    session: SessionToken,
+    request: ChangeBooking,
+}
+
 async fn handle_change_booking(
     State(booker): State<Arc<RwLock<BookingApp>>>,
-    extract::Json(payload): extract::Json<Value>,
+    Json(payload): Json<ChangeBookingPayload>,
 ) -> Result<(StatusCode, String), (StatusCode, String)> {
     debug!("Changing booking: {:?}", payload);
-    debug!("Parsing payload: {:?}", payload);
 
-    let session: SessionToken =
-        serde_json::from_value(payload["session"].clone()).map_err(|e| {
-            error!("Error parsing session token: {}", e);
-            (
-                StatusCode::BAD_REQUEST,
-                "Error parsing session token".to_string(),
-            )
-        })?;
+    // let session: SessionToken = serde_json::from_value(payload.session.clone()).map_err(|e| {
+    //     error!("Error parsing session token: {}", e);
+    //     (
+    //         StatusCode::BAD_REQUEST,
+    //         "Error parsing session token".to_string(),
+    //     )
+    // })?;
 
-    let payload: ChangeBooking =
-        serde_json::from_value(payload["request"].clone()).map_err(|e| {
-            error!("Error parsing delete payload: {}", e);
-            (
-                StatusCode::BAD_REQUEST,
-                "Error parsing delete payload".to_string(),
-            )
-        })?;
+    // let payload: ChangeBooking =
+    //     serde_json::from_value(payload["request"].clone()).map_err(|e| {
+    //         error!("Error parsing delete payload: {}", e);
+    //         (
+    //             StatusCode::BAD_REQUEST,
+    //             "Error parsing delete payload".to_string(),
+    //         )
+    //     })?;
 
     //check that the user is allowed to change the booking
-    if !booker.read().await.assert_id(&payload.id, &session) {
+    if !booker
+        .read()
+        .await
+        .assert_id(&payload.request.id, &payload.session)
+    {
         return Err((
             StatusCode::FORBIDDEN,
             "You are not allowed to delete this booking".to_string(),
         ));
     }
 
-    match booker.write().await.handle_change_booking(payload) {
+    match booker.write().await.handle_change_booking(payload.request) {
         Ok(()) => Ok((StatusCode::OK, "Booking changed".to_string())),
         Err(e) => {
             error!("Error changing booking: {}", e);
@@ -110,40 +134,50 @@ async fn handle_change_booking(
     }
 }
 
+#[derive(Deserialize, JsonSchema, Debug)]
+struct DeleteBookingPayload {
+    session: SessionToken,
+    request: DeletePayload,
+}
+
 async fn handle_delete(
     State(booker): State<Arc<RwLock<BookingApp>>>,
-    extract::Json(payload): extract::Json<Value>,
+    Json(payload): Json<DeleteBookingPayload>,
 ) -> Result<(StatusCode, String), (StatusCode, String)> {
     debug!("Deleting booking: {:?}", payload);
     debug!("Parsing payload: {:?}", payload);
 
-    let session: SessionToken =
-        serde_json::from_value(payload["session"].clone()).map_err(|e| {
-            error!("Error parsing session token: {}", e);
-            (
-                StatusCode::BAD_REQUEST,
-                "Error parsing session token".to_string(),
-            )
-        })?;
+    // let session: SessionToken =
+    //     serde_json::from_value(payload["session"].clone()).map_err(|e| {
+    //         error!("Error parsing session token: {}", e);
+    //         (
+    //             StatusCode::BAD_REQUEST,
+    //             "Error parsing session token".to_string(),
+    //         )
+    //     })?;
 
-    let payload: DeletePayload =
-        serde_json::from_value(payload["request"].clone()).map_err(|e| {
-            error!("Error parsing delete payload: {}", e);
-            (
-                StatusCode::BAD_REQUEST,
-                "Error parsing delete payload".to_string(),
-            )
-        })?;
+    // let payload: DeletePayload =
+    //     serde_json::from_value(payload["request"].clone()).map_err(|e| {
+    //         error!("Error parsing delete payload: {}", e);
+    //         (
+    //             StatusCode::BAD_REQUEST,
+    //             "Error parsing delete payload".to_string(),
+    //         )
+    //     })?;
 
     //check that the user is allowed to delete the booking
-    if !booker.read().await.assert_id(&payload.id, &session) {
+    if !booker
+        .read()
+        .await
+        .assert_id(&payload.request.id, &payload.session)
+    {
         return Err((
             StatusCode::FORBIDDEN,
             "You are not allowed to delete this booking".to_string(),
         ));
     }
 
-    match booker.write().await.handle_delete(payload) {
+    match booker.write().await.handle_delete(payload.request) {
         Ok(()) => Ok((StatusCode::OK, "Booking deleted".to_string())),
         Err(e) => {
             error!("Error deleting booking: {}", e);
@@ -152,22 +186,24 @@ async fn handle_delete(
     }
 }
 
-async fn handle_resources(State(app): State<Arc<RwLock<BookingApp>>>) -> String {
+async fn handle_resources(
+    State(app): State<Arc<RwLock<BookingApp>>>,
+) -> Json<HashMap<String, booker::BookableResource>> {
     match app.read().await.get_resources() {
-        Ok(resources) => resources,
+        Ok(resources) => Json(resources),
         Err(e) => {
             error!("Error getting resources: {}", e);
-            "[]".to_string()
+            Json(HashMap::new())
         }
     }
 }
 
-async fn handle_bookings(State(app): State<Arc<RwLock<BookingApp>>>) -> String {
+async fn handle_bookings(State(app): State<Arc<RwLock<BookingApp>>>) -> Json<Vec<booker::Event>> {
     match app.read().await.get_bookings() {
-        Ok(bookings) => bookings,
+        Ok(bookings) => Json(bookings),
         Err(e) => {
             error!("Error getting bookings: {}", e);
-            "[]".to_string()
+            Json(vec![])
         }
     }
 }
@@ -238,11 +274,11 @@ async fn health_check() -> StatusCode {
     StatusCode::OK
 }
 
-fn auth_api(auth_app: Arc<RwLock<AuthApp>>) -> Router {
-    Router::new()
-        .route("/login", post(hande_login).get(check_login))
-        .route("/logout", get(handle_logout))
-        .route("/heartbeat", get(health_check))
+fn auth_api(auth_app: Arc<RwLock<AuthApp>>) -> ApiRouter {
+    ApiRouter::new()
+        .api_route("/login", post(hande_login).get(check_login))
+        .api_route("/logout", get(handle_logout))
+        .api_route("/heartbeat", get(health_check))
         .with_state(auth_app)
 }
 
@@ -268,7 +304,7 @@ async fn check_session(
                 StatusCode::BAD_REQUEST
             })?;
 
-            let req_json = serde_json::from_slice::<Value>(&bytes).map_err(|e| {
+            let req_json = serde_json::from_slice::<serde_json::Value>(&bytes).map_err(|e| {
                 error!("Error parsing json: {}", e);
                 StatusCode::BAD_REQUEST
             })?;
@@ -277,7 +313,7 @@ async fn check_session(
             #[derive(Deserialize, Serialize)]
             struct SessionRequest {
                 session: SessionToken,
-                request: Value,
+                request: serde_json::Value,
             }
 
             let req = SessionRequest {
@@ -299,19 +335,23 @@ async fn check_session(
     Ok(next.run(request).await)
 }
 
-fn booking_locked_endpoints(book_app: Arc<RwLock<BookingApp>>) -> Router {
-    Router::new()
-        .route("/new", post(handle_new_booking))
-        .route("/delete", post(handle_delete))
-        .route("/change", post(handle_change_booking))
+fn booking_locked_endpoints(book_app: Arc<RwLock<BookingApp>>) -> ApiRouter {
+    ApiRouter::new()
+        .api_route("/new", post(handle_new_booking))
+        .api_route("/delete", post(handle_delete))
+        .api_route("/change", post(handle_change_booking))
         .with_state(book_app)
 }
 
-fn booking_open_endpoints(book_app: Arc<RwLock<BookingApp>>) -> Router {
-    Router::new()
-        .route("/events", get(handle_bookings))
-        .route("/resources", get(handle_resources))
+fn booking_open_endpoints(book_app: Arc<RwLock<BookingApp>>) -> ApiRouter {
+    ApiRouter::new()
+        .api_route("/events", get(handle_bookings))
+        .api_route("/resources", get(handle_resources))
         .with_state(book_app)
+}
+
+async fn serve_api(Extension(api): Extension<OpenApi>) -> Json<OpenApi> {
+    Json(api)
 }
 
 #[tokio::main]
@@ -359,24 +399,36 @@ async fn main() -> Result<()> {
         check_session,
     ));
 
-    // build our application with routes
-    let app = Router::new()
-        .nest_service(
+    // build our application with api_routes
+    let app = ApiRouter::new()
+        .nest_api_service(
             "/api/book/secure/",
-            booking_locked_endpoints(book_app.clone())
-                .layer(auth_middleware)
-                .into_service(),
+            booking_locked_endpoints(book_app.clone()).layer(auth_middleware),
         )
-        .nest_service(
-            "/api/book/",
-            booking_open_endpoints(book_app.clone()).into_service(),
-        )
-        .nest_service("/api/", auth_api(auth_app.clone()).into_service())
+        .nest_api_service("/api/book/", booking_open_endpoints(book_app.clone()))
+        .nest_api_service("/api/", auth_api(auth_app.clone()))
         .nest_service("/", frontend)
+        .route("/redoc", Redoc::new("/api.json").axum_route())
+        .route("/api.json", get(serve_api))
         .layer(middleware);
+
+    let mut api = OpenApi {
+        info: Info {
+            description: Some("POP booking system API".to_string()),
+            ..Info::default()
+        },
+        ..OpenApi::default()
+    };
 
     // run our app with hyper, listening globally on port 3000
     let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{}", env::var("PORT")?)).await?;
-    axum::serve(listener, app).await?;
+    axum::serve(
+        listener,
+        app.finish_api(&mut api)
+            // Expose the documentation to the handlers.
+            .layer(Extension(api))
+            .into_make_service(),
+    )
+    .await?;
     Ok(())
 }

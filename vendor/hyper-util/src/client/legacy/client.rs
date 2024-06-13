@@ -22,7 +22,8 @@ use tracing::{debug, trace, warn};
 use super::connect::HttpConnector;
 use super::connect::{Alpn, Connect, Connected, Connection};
 use super::pool::{self, Ver};
-use crate::common::{lazy as hyper_lazy, Exec, Lazy, SyncWrapper};
+
+use crate::common::{lazy as hyper_lazy, timer, Exec, Lazy, SyncWrapper};
 
 type BoxSendFuture = Pin<Box<dyn Future<Output = ()> + Send>>;
 
@@ -382,6 +383,14 @@ where
         &self,
         pool_key: PoolKey,
     ) -> Result<pool::Pooled<PoolClient<B>, PoolKey>, ClientConnectError> {
+        // Return a single connection if pooling is not enabled
+        if !self.pool.is_enabled() {
+            return self
+                .connect_to(pool_key)
+                .await
+                .map_err(ClientConnectError::Normal);
+        }
+
         // This actually races 2 different futures to try to get a ready
         // connection the fastest, and to reduce connection churn.
         //
@@ -624,7 +633,7 @@ where
 impl<C: Clone, B> Clone for Client<C, B> {
     fn clone(&self) -> Client<C, B> {
         Client {
-            config: self.config.clone(),
+            config: self.config,
             exec: self.exec.clone(),
             #[cfg(feature = "http1")]
             h1_builder: self.h1_builder.clone(),
@@ -916,7 +925,7 @@ fn set_scheme(uri: &mut Uri, scheme: Scheme) {
         uri.scheme().is_none(),
         "set_scheme expects no existing scheme"
     );
-    let old = std::mem::replace(uri, Uri::default());
+    let old = std::mem::take(uri);
     let mut parts: ::http::uri::Parts = old.into();
     parts.scheme = Some(scheme);
     parts.path_and_query = Some("/".parse().expect("slash is a valid path"));
@@ -967,6 +976,7 @@ pub struct Builder {
     #[cfg(feature = "http2")]
     h2_builder: hyper::client::conn::http2::Builder<Exec>,
     pool_config: pool::Config,
+    pool_timer: Option<timer::Timer>,
 }
 
 impl Builder {
@@ -991,13 +1001,34 @@ impl Builder {
                 idle_timeout: Some(Duration::from_secs(90)),
                 max_idle_per_host: std::usize::MAX,
             },
+            pool_timer: None,
         }
     }
     /// Set an optional timeout for idle sockets being kept-alive.
+    /// A `Timer` is required for this to take effect. See `Builder::pool_timer`
     ///
     /// Pass `None` to disable timeout.
     ///
     /// Default is 90 seconds.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// # #[cfg(feature = "tokio")]
+    /// # fn run () {
+    /// use std::time::Duration;
+    /// use hyper_util::client::legacy::Client;
+    /// use hyper_util::rt::{TokioExecutor, TokioTimer};
+    ///
+    /// let client = Client::builder(TokioExecutor::new())
+    ///     .pool_idle_timeout(Duration::from_secs(30))
+    ///     .pool_timer(TokioTimer::new())
+    ///     .build_http();
+    ///
+    /// # let infer: Client<_, http_body_util::Full<bytes::Bytes>> = client;
+    /// # }
+    /// # fn main() {}
+    /// ```
     pub fn pool_idle_timeout<D>(&mut self, val: D) -> &mut Self
     where
         D: Into<Option<Duration>>,
@@ -1122,7 +1153,7 @@ impl Builder {
 
     /// Sets whether invalid header lines should be silently ignored in HTTP/1 responses.
     ///
-    /// This mimicks the behaviour of major browsers. You probably don't want this.
+    /// This mimics the behaviour of major browsers. You probably don't want this.
     /// You should only want this if you are implementing a proxy whose main
     /// purpose is to sit in front of browsers whose users access arbitrary content
     /// which may be malformed, and they expect everything that works without
@@ -1358,7 +1389,7 @@ impl Builder {
         self
     }
 
-    /// Provide a timer to be used for timeouts and intervals.
+    /// Provide a timer to be used for h2
     ///
     /// See the documentation of [`h2::client::Builder::timer`] for more
     /// details.
@@ -1370,7 +1401,15 @@ impl Builder {
     {
         #[cfg(feature = "http2")]
         self.h2_builder.timer(timer);
-        // TODO(https://github.com/hyperium/hyper/issues/3167) set for pool as well
+        self
+    }
+
+    /// Provide a timer to be used for timeouts and intervals in connection pools.
+    pub fn pool_timer<M>(&mut self, timer: M) -> &mut Self
+    where
+        M: Timer + Clone + Send + Sync + 'static,
+    {
+        self.pool_timer = Some(timer::Timer::new(timer.clone()));
         self
     }
 
@@ -1439,6 +1478,7 @@ impl Builder {
         B::Data: Send,
     {
         let exec = self.exec.clone();
+        let timer = self.pool_timer.clone();
         Client {
             config: self.client_config,
             exec: exec.clone(),
@@ -1447,7 +1487,7 @@ impl Builder {
             #[cfg(feature = "http2")]
             h2_builder: self.h2_builder.clone(),
             connector,
-            pool: pool::Pool::new(self.pool_config, exec),
+            pool: pool::Pool::new(self.pool_config, exec, timer),
         }
     }
 }
@@ -1456,7 +1496,6 @@ impl fmt::Debug for Builder {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Builder")
             .field("client_config", &self.client_config)
-            //.field("conn_builder", &self.conn_builder)
             .field("pool_config", &self.pool_config)
             .finish()
     }
@@ -1477,6 +1516,11 @@ impl StdError for Error {
 }
 
 impl Error {
+    /// Returns true if this was an error from `Connect`.
+    pub fn is_connect(&self) -> bool {
+        matches!(self.kind, ErrorKind::Connect)
+    }
+
     fn is_canceled(&self) -> bool {
         matches!(self.kind, ErrorKind::Canceled)
     }

@@ -6,9 +6,10 @@ use super::codec::Reader;
 use super::enums::AlertLevel;
 use super::message::{Message, OpaqueMessage, PlainMessage};
 
-use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
+use std::prelude::v1::*;
+use std::{format, fs, println, vec};
 
 #[test]
 fn test_read_fuzz_corpus() {
@@ -79,12 +80,6 @@ fn can_read_safari_client_hello() {
 fn alert_is_not_handshake() {
     let m = Message::build_alert(AlertLevel::Fatal, AlertDescription::DecodeError);
     assert!(!m.is_handshake_type(HandshakeType::ClientHello));
-}
-
-#[test]
-fn alert_is_not_opaque() {
-    let m = Message::build_alert(AlertLevel::Fatal, AlertDescription::DecodeError);
-    assert!(Message::try_from(m).is_ok());
 }
 
 #[test]

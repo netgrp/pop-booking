@@ -8,6 +8,7 @@ use base64::prelude::*;
 use chrono::{DateTime, Utc};
 use rand::{RngCore, SeedableRng};
 use reqwest::StatusCode;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use sha1::{Digest, Sha1};
 use std::{collections::HashMap, sync::Arc};
@@ -17,7 +18,7 @@ use tokio::time::Duration;
 #[allow(unused_imports)]
 use tracing::{debug, info, trace};
 
-#[derive(Deserialize)]
+#[derive(Deserialize, JsonSchema)]
 pub struct LoginPayload {
     pub username: String,
     pub password: String,
@@ -93,7 +94,7 @@ impl Default for TokenId {
     }
 }
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, JsonSchema, Debug)]
 pub struct SessionToken {
     user: User,
     expiry: u64,

@@ -2,6 +2,7 @@ use crate::authenticate::SessionToken;
 use crate::hourmin::HourMin;
 use anyhow::{anyhow, Result};
 use chrono::{DateTime, Datelike, Utc};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{self};
 use std::collections::HashMap;
@@ -9,7 +10,7 @@ use std::env;
 use std::hash::{Hash, Hasher};
 use tracing::{debug, info};
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 pub struct NewBooking {
     pub resource_names: Vec<String>,
     #[serde(deserialize_with = "parse_rfc3339")]
@@ -28,7 +29,7 @@ where
         .map(|dt| dt.with_timezone(&Utc))
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 pub struct ChangeBooking {
     pub id: u32,
     #[serde(deserialize_with = "parse_rfc3339")]
@@ -37,12 +38,12 @@ pub struct ChangeBooking {
     pub end_time: DateTime<Utc>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 pub struct DeletePayload {
     pub id: u32,
 }
 
-#[derive(Debug, PartialEq, Eq, Hash, Clone, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Eq, Hash, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct User {
     username: String,
     room: u16,
@@ -54,7 +55,7 @@ impl User {
     }
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize, JsonSchema)]
 struct ResourcePeriod {
     //month and date
     #[serde(deserialize_with = "month_day_from_str")]
@@ -140,6 +141,23 @@ pub struct BookingApp {
     cached_resource_json: Option<String>,
 }
 
+// Rebuild cache
+#[derive(Serialize, JsonSchema)]
+pub struct Event {
+    title: String,
+    id: u32,
+    start: String,
+    end: String,
+    owner: u16,
+    color: String,
+}
+
+#[derive(Serialize, Debug, JsonSchema)]
+pub struct BookableResource {
+    name: String,
+    disallowed_periods: Option<Vec<ResourcePeriod>>,
+}
+
 impl BookingApp {
     pub fn from_config(config_dir: &str) -> Result<Self> {
         //load using serde_json
@@ -179,25 +197,19 @@ impl BookingApp {
         self.bookings = serde_json::from_str(&bookings_content)
             .map_err(|e| anyhow!("Loading of bookings failed: {}", e))?;
 
-        //build bookings json
-        self.cached_resource_json = Some(self.get_event_json().unwrap());
+        // //build bookings json
+        // self.cached_resource_json = Some(self.get_event_json().unwrap());
 
         Ok(())
     }
 
-    pub fn get_resources(&self) -> Result<String> {
-        #[derive(Serialize, Debug)]
-        struct Resource {
-            name: String,
-            disallowed_periods: Option<Vec<ResourcePeriod>>,
-        }
-        let resources = &self
-            .resources
+    pub fn get_resources(&self) -> Result<HashMap<String, BookableResource>> {
+        self.resources
             .iter()
             .map(|(name, resource)| {
                 Ok((
                     name.clone(),
-                    Resource {
+                    BookableResource {
                         name: resource.name.clone(),
                         disallowed_periods: resource
                             .disallowed_periods
@@ -218,33 +230,19 @@ impl BookingApp {
                     },
                 ))
             })
-            .collect::<Result<HashMap<String, Resource>>>()
-            .map_err(|e| anyhow!("Failed to create resource json {e}"))?;
-        serde_json::to_string_pretty(resources)
-            .map_err(|e| anyhow!("Failed to serialize json: {}", e))
+            .collect::<Result<HashMap<String, BookableResource>>>()
+            .map_err(|e| anyhow!("Failed to create resource hashmap: {e}"))
     }
 
     // https://fullcalendar.io/docs/event-parsing
-    pub fn get_bookings(&self) -> Result<String, serde_json::Error> {
-        if let Some(cached_string) = &self.cached_resource_json {
-            return Ok(cached_string.clone());
-        }
-
+    pub fn get_bookings(&self) -> Result<Vec<Event>, serde_json::Error> {
+        // if let Some(cached_string) = &self.cached_resource_json {
+        //     return Ok(cached_string.clone());
+        // }
         self.get_event_json()
     }
 
-    fn get_event_json(&self) -> Result<String, serde_json::Error> {
-        // Rebuild cache
-        #[derive(Serialize)]
-        struct Event {
-            title: String,
-            id: u32,
-            start: String,
-            end: String,
-            owner: u16,
-            color: String,
-        }
-
+    fn get_event_json(&self) -> Result<Vec<Event>, serde_json::Error> {
         let bookings_json = self
             .bookings
             .iter()
@@ -261,7 +259,7 @@ impl BookingApp {
             })
             .collect::<Vec<Event>>();
 
-        serde_json::to_string(&bookings_json)
+        Ok(bookings_json)
     }
 
     fn check_available(&self, allow_id: Option<u32>, booking: &Booking) -> Result<(), String> {
@@ -484,8 +482,8 @@ impl BookingApp {
 
         self.bookings.remove(&id);
 
-        //build bookings json
-        self.cached_resource_json = Some(self.get_event_json().unwrap());
+        // //build bookings json
+        // self.cached_resource_json = Some(self.get_event_json().unwrap());
 
         //save to file
         let bookings_path = format!(
@@ -514,8 +512,8 @@ impl BookingApp {
         debug!("Adding booking: {:?}", booking);
         self.bookings.insert(*id, booking);
 
-        //build bookings json
-        self.cached_resource_json = Some(self.get_event_json().unwrap());
+        // //build bookings json
+        // self.cached_resource_json = Some(self.get_event_json().unwrap());
 
         //save to file
         let bookings_path = format!(
@@ -537,8 +535,8 @@ impl BookingApp {
 
         self.bookings.remove(id);
 
-        //build bookings json
-        self.cached_resource_json = Some(self.get_event_json().unwrap());
+        // //build bookings json
+        // self.cached_resource_json = Some(self.get_event_json().unwrap());
 
         //save to file
         let bookings_path = format!(
