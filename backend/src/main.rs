@@ -221,7 +221,6 @@ async fn hande_login(
     {
         Ok((cookie, session_token)) => {
             debug!("login succesful");
-            debug!("Adding cookie: {}", cookie);
 
             Ok((StatusCode::OK, cookies.add(cookie), Json(session_token)))
         }

@@ -264,8 +264,6 @@ impl AuthApp {
 
             let hash = format!("{:x}", self.hasher.finalize_reset());
 
-            debug!("Hash: {}", hash);
-            debug!("K-Net hash: {}", pwd_parts[2]);
             if hash != pwd_parts[2] {
                 break 'login_block Err("Login failed, wrong password".to_string());
             }
@@ -350,7 +348,6 @@ impl AuthApp {
             expiry: chrono::Utc::now().timestamp() as u64 + 60 * 60 * 24, //24 hours
         };
 
-        debug!("Inserting new session token: {}", token.to_string());
         self.tokens.insert(token, session_token.clone());
 
         Ok((Self::gen_cookie(&token), session_token))
