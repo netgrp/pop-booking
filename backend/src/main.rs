@@ -10,26 +10,22 @@ use aide::{
 };
 use anyhow::Result;
 use axum::{
-    body::Body,
     debug_handler,
     extract::{Request, State},
-    http::{header::CONTENT_TYPE, StatusCode},
+    http::{HeaderMap, HeaderValue, StatusCode},
     middleware::{self, Next},
     response::Response,
     Extension, Json,
 };
 use axum_extra::extract::cookie::CookieJar;
 use backend::{
-    authenticate::SessionToken,
+    authenticate::UserSession,
     booker::{self, BookingApp, DeletePayload, NewBooking},
 };
 use backend::{
     authenticate::{AuthApp, TokenId},
     booker::ChangeBooking,
 };
-use http_body_util::BodyExt;
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::Duration;
 use std::{collections::HashMap, env};
@@ -41,41 +37,27 @@ use tower_http::{
 use tracing::{debug, error, info};
 use tracing_subscriber::filter::EnvFilter;
 
-#[derive(Deserialize, JsonSchema, Debug)]
-struct NewBookingPayload {
-    session: SessionToken,
-    request: NewBooking,
-}
-
-#[debug_handler]
 async fn handle_new_booking(
     State(booker): State<Arc<RwLock<BookingApp>>>,
-    Json(payload): Json<NewBookingPayload>,
+    headers: HeaderMap,
+    Json(payload): Json<NewBooking>,
 ) -> Result<(StatusCode, String), (StatusCode, String)> {
     debug!("Creating new booking: {:?}", payload);
 
-    // let session: SessionToken =
-    //     serde_json::from_value(payload["session"].clone()).map_err(|e| {
-    //         error!("Error parsing session token: {}", e);
-    //         (
-    //             StatusCode::BAD_REQUEST,
-    //             "Error parsing session token".to_string(),
-    //         )
-    //     })?;
+    let user = serde_json::from_slice(
+        headers
+            .get("x-user-id")
+            .ok_or((StatusCode::UNAUTHORIZED, "No user id found".to_string()))?
+            .as_bytes(),
+    )
+    .map_err(|e| {
+        error!("Error decoding user id: {}", e);
+        (StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
+    })?;
 
-    // let payload: NewBooking = serde_json::from_value(payload["request"].clone()).map_err(|e| {
-    //     error!("Error parsing delete payload: {}", e);
-    //     (
-    //         StatusCode::BAD_REQUEST,
-    //         "Error parsing delete payload".to_string(),
-    //     )
-    // })?;
+    debug!("User: {:?}", user);
 
-    match booker
-        .write()
-        .await
-        .handle_new_booking(payload.request, payload.session)
-    {
+    match booker.write().await.handle_new_booking(payload, &user) {
         Ok(id) => Ok((StatusCode::OK, id)),
         Err(e) => {
             error!("Error creating new booking: {}", e);
@@ -84,48 +66,33 @@ async fn handle_new_booking(
     }
 }
 
-#[derive(Deserialize, JsonSchema, Debug)]
-struct ChangeBookingPayload {
-    session: SessionToken,
-    request: ChangeBooking,
-}
-
 async fn handle_change_booking(
     State(booker): State<Arc<RwLock<BookingApp>>>,
-    Json(payload): Json<ChangeBookingPayload>,
+    headers: HeaderMap,
+    Json(payload): Json<ChangeBooking>,
 ) -> Result<(StatusCode, String), (StatusCode, String)> {
     debug!("Changing booking: {:?}", payload);
 
-    // let session: SessionToken = serde_json::from_value(payload.session.clone()).map_err(|e| {
-    //     error!("Error parsing session token: {}", e);
-    //     (
-    //         StatusCode::BAD_REQUEST,
-    //         "Error parsing session token".to_string(),
-    //     )
-    // })?;
-
-    // let payload: ChangeBooking =
-    //     serde_json::from_value(payload["request"].clone()).map_err(|e| {
-    //         error!("Error parsing delete payload: {}", e);
-    //         (
-    //             StatusCode::BAD_REQUEST,
-    //             "Error parsing delete payload".to_string(),
-    //         )
-    //     })?;
+    let user = serde_json::from_slice(
+        headers
+            .get("x-user-id")
+            .ok_or((StatusCode::UNAUTHORIZED, "No user id found".to_string()))?
+            .as_bytes(),
+    )
+    .map_err(|e| {
+        error!("Error decoding user id: {}", e);
+        (StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
+    })?;
 
     //check that the user is allowed to change the booking
-    if !booker
-        .read()
-        .await
-        .assert_id(&payload.request.id, &payload.session)
-    {
+    if !booker.read().await.assert_id(&payload.id, &user) {
         return Err((
             StatusCode::FORBIDDEN,
             "You are not allowed to delete this booking".to_string(),
         ));
     }
 
-    match booker.write().await.handle_change_booking(payload.request) {
+    match booker.write().await.handle_change_booking(payload) {
         Ok(()) => Ok((StatusCode::OK, "Booking changed".to_string())),
         Err(e) => {
             error!("Error changing booking: {}", e);
@@ -134,50 +101,33 @@ async fn handle_change_booking(
     }
 }
 
-#[derive(Deserialize, JsonSchema, Debug)]
-struct DeleteBookingPayload {
-    session: SessionToken,
-    request: DeletePayload,
-}
-
 async fn handle_delete(
     State(booker): State<Arc<RwLock<BookingApp>>>,
-    Json(payload): Json<DeleteBookingPayload>,
+    headers: HeaderMap,
+    Json(payload): Json<DeletePayload>,
 ) -> Result<(StatusCode, String), (StatusCode, String)> {
     debug!("Deleting booking: {:?}", payload);
-    debug!("Parsing payload: {:?}", payload);
 
-    // let session: SessionToken =
-    //     serde_json::from_value(payload["session"].clone()).map_err(|e| {
-    //         error!("Error parsing session token: {}", e);
-    //         (
-    //             StatusCode::BAD_REQUEST,
-    //             "Error parsing session token".to_string(),
-    //         )
-    //     })?;
-
-    // let payload: DeletePayload =
-    //     serde_json::from_value(payload["request"].clone()).map_err(|e| {
-    //         error!("Error parsing delete payload: {}", e);
-    //         (
-    //             StatusCode::BAD_REQUEST,
-    //             "Error parsing delete payload".to_string(),
-    //         )
-    //     })?;
+    let user = serde_json::from_slice(
+        headers
+            .get("x-user-id")
+            .ok_or((StatusCode::UNAUTHORIZED, "No user id found".to_string()))?
+            .as_bytes(),
+    )
+    .map_err(|e| {
+        error!("Error decoding user id: {}", e);
+        (StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
+    })?;
 
     //check that the user is allowed to delete the booking
-    if !booker
-        .read()
-        .await
-        .assert_id(&payload.request.id, &payload.session)
-    {
+    if !booker.read().await.assert_id(&payload.id, &user) {
         return Err((
             StatusCode::FORBIDDEN,
             "You are not allowed to delete this booking".to_string(),
         ));
     }
 
-    match booker.write().await.handle_delete(payload.request) {
+    match booker.write().await.handle_delete(payload) {
         Ok(()) => Ok((StatusCode::OK, "Booking deleted".to_string())),
         Err(e) => {
             error!("Error deleting booking: {}", e);
@@ -213,7 +163,7 @@ async fn hande_login(
     State(auth_app): State<Arc<RwLock<AuthApp>>>,
     cookies: CookieJar,
     Json(payload): Json<backend::authenticate::LoginPayload>,
-) -> Result<(StatusCode, CookieJar, Json<SessionToken>), (StatusCode, String)> {
+) -> Result<(StatusCode, CookieJar, Json<UserSession>), (StatusCode, String)> {
     let mut auth_app = auth_app.write().await;
     match auth_app
         .authenticate_user(&payload.username, &payload.password)
@@ -231,7 +181,7 @@ async fn hande_login(
 async fn check_login(
     State(auth_app): State<Arc<RwLock<AuthApp>>>,
     cookies: CookieJar,
-) -> Result<(StatusCode, Json<SessionToken>), StatusCode> {
+) -> Result<(StatusCode, Json<UserSession>), StatusCode> {
     let session_token = auth_app
         .read()
         .await
@@ -281,56 +231,40 @@ fn auth_api(auth_app: Arc<RwLock<AuthApp>>) -> ApiRouter {
         .with_state(auth_app)
 }
 
-async fn check_session(
+pub async fn check_session(
     State(auth_app): State<Arc<RwLock<AuthApp>>>,
     cookies: CookieJar,
     request: Request,
     next: Next,
 ) -> Result<Response, StatusCode> {
-    let session_token = auth_app
+    let session = auth_app
         .read()
         .await
         .assert_login(cookies)
         .map_err(|_| StatusCode::UNAUTHORIZED)?;
-    let content_type_header = request.headers().get(CONTENT_TYPE);
-    let content_type = content_type_header.and_then(|value| value.to_str().ok());
 
-    if let Some(content_type) = content_type {
-        if content_type.starts_with("application/json") {
-            let (parts, body) = request.into_parts();
-            let bytes = body.collect().await.map(|b| b.to_bytes()).map_err(|e| {
-                error!("Error reading body: {}", e);
-                StatusCode::BAD_REQUEST
-            })?;
+    debug!("User authenticated");
 
-            let req_json = serde_json::from_slice::<serde_json::Value>(&bytes).map_err(|e| {
-                error!("Error parsing json: {}", e);
-                StatusCode::BAD_REQUEST
-            })?;
+    let (mut parts, body) = request.into_parts();
 
-            //combine session token with request
-            #[derive(Deserialize, Serialize)]
-            struct SessionRequest {
-                session: SessionToken,
-                request: serde_json::Value,
-            }
-
-            let req = SessionRequest {
-                session: session_token,
-                request: req_json,
-            };
-
-            let request = Request::from_parts(
-                parts,
-                Body::from(serde_json::to_vec(&req).map_err(|e| {
-                    error!("Error serializing json: {}", e);
+    parts.headers.insert(
+        "x-user-id",
+        HeaderValue::from_str(
+            serde_json::to_string(&session.user)
+                .map_err(|e| {
+                    error!("Error serializing user id: {:?}", e);
                     StatusCode::INTERNAL_SERVER_ERROR
-                })?),
-            );
-            return Ok(next.run(request).await);
-        }
-    }
+                })?
+                .as_str(),
+        )
+        .map_err(|e| {
+            error!("Error inserting header: {:?}", e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?,
+    );
 
+    let request = Request::from_parts(parts, body);
+    debug!("Request: {:?}", request);
     Ok(next.run(request).await)
 }
 
@@ -375,7 +309,11 @@ async fn main() -> Result<()> {
         .await
         .load_bookings(&env::var("BOOKINGS_DIR")?)?;
 
-    let auth_app = Arc::new(RwLock::new(AuthApp::new()?));
+    let auth_app = Arc::new(RwLock::new(AuthApp::new(
+        env::var("KNET_API_BASE_URL")?,
+        env::var("KNET_API_USERNAME")?,
+        env::var("KNET_API_PASSWORD")?,
+    )?));
     let cleaner = auth_app.clone();
 
     tokio::spawn(async {

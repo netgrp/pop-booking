@@ -1,5 +1,4 @@
-use crate::authenticate::SessionToken;
-use crate::hourmin::HourMin;
+use super::hourmin::HourMin;
 use anyhow::{anyhow, Result};
 use chrono::{DateTime, Datelike, Utc};
 use schemars::JsonSchema;
@@ -138,7 +137,6 @@ pub struct BookingApp {
     bookings: HashMap<u32, Booking>,
     resources: HashMap<String, Resource>,
     resource_periods: HashMap<String, ResourcePeriod>,
-    cached_resource_json: Option<String>,
 }
 
 // Rebuild cache
@@ -178,7 +176,6 @@ impl BookingApp {
             bookings: HashMap::new(),
             resources,
             resource_periods,
-            cached_resource_json: None,
         })
     }
 
@@ -405,7 +402,7 @@ impl BookingApp {
     pub fn handle_new_booking(
         &mut self,
         booking: NewBooking,
-        session: SessionToken,
+        user: &User,
     ) -> Result<String, String> {
         // Assert that the booking is within the allowed times
 
@@ -427,7 +424,7 @@ impl BookingApp {
             .into_iter()
             .map(|resource_name| -> Result<u32, String> {
                 let booking = Booking {
-                    user: session.get_user().clone(),
+                    user: user.clone(),
                     resource_name,
                     start_time: booking.start_time,
                     end_time: booking.end_time,
@@ -498,9 +495,9 @@ impl BookingApp {
         Ok(())
     }
 
-    pub fn assert_id(&self, id: &u32, session: &SessionToken) -> bool {
+    pub fn assert_id(&self, id: &u32, user: &User) -> bool {
         if let Some(booking) = self.bookings.get(id) {
-            return booking.user == *session.get_user();
+            return booking.user == *user;
         }
         false
     }

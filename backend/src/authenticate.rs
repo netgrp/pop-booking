@@ -11,10 +11,11 @@ use reqwest::StatusCode;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use sha1::{Digest, Sha1};
+use std::hash::Hash;
 use std::{collections::HashMap, sync::Arc};
-use std::{env, hash::Hash};
 use tokio::sync::RwLock;
 use tokio::time::Duration;
+use tracing::warn;
 #[allow(unused_imports)]
 use tracing::{debug, info, trace};
 
@@ -95,19 +96,13 @@ impl Default for TokenId {
 }
 
 #[derive(Serialize, Deserialize, Clone, JsonSchema, Debug)]
-pub struct SessionToken {
-    user: User,
+pub struct UserSession {
+    pub user: User,
     expiry: u64,
 }
 
-impl SessionToken {
-    pub fn get_user(&self) -> &User {
-        &self.user
-    }
-}
-
 pub struct AuthApp {
-    tokens: HashMap<TokenId, SessionToken>,
+    tokens: HashMap<TokenId, UserSession>,
     timeouts: HashMap<String, (DateTime<Utc>, u16)>,
     client: reqwest::Client,
     hasher: Sha1,
@@ -115,12 +110,46 @@ pub struct AuthApp {
     knet_password: String,
     knet_api_base_url: String,
 }
-impl AuthApp {
-    pub fn new() -> Result<AuthApp> {
-        let knet_api_base_url = env::var("KNET_API_BASE_URL")?;
-        let knet_api_username = env::var("KNET_API_USERNAME")?;
-        let knet_api_password = env::var("KNET_API_PASSWORD")?;
 
+#[derive(Deserialize, JsonSchema)]
+struct UserResponse {
+    count: u64,
+    results: Vec<UserResult>,
+}
+
+#[derive(Deserialize, JsonSchema, Clone)]
+struct UserResult {
+    username: String,
+    password: String,
+    vlan: String,
+}
+
+#[derive(Deserialize, JsonSchema, Clone)]
+pub struct VlanResponse {
+    #[serde(deserialize_with = "parse_room")]
+    room: u16,
+}
+
+fn parse_room<'de, D>(deserializer: D) -> Result<u16, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let s = String::deserialize(deserializer)?;
+    s.split_whitespace()
+        .last()
+        .map(|s| {
+            let mut chars = s.chars();
+            chars.next_back();
+            chars
+                .as_str()
+                .parse::<u16>()
+                .map_err(serde::de::Error::custom)
+        })
+        .ok_or(serde::de::Error::custom("Failed to parse room"))?
+}
+
+impl AuthApp {
+    pub fn new(base_url: String, username: String, password: String) -> Result<AuthApp> {
         let client = reqwest::Client::new();
         let hasher = Sha1::new();
 
@@ -129,9 +158,9 @@ impl AuthApp {
             timeouts: HashMap::new(),
             client,
             hasher,
-            knet_api_base_url,
-            knet_username: knet_api_username,
-            knet_password: knet_api_password,
+            knet_api_base_url: base_url,
+            knet_username: username,
+            knet_password: password,
         })
     }
 
@@ -169,12 +198,12 @@ impl AuthApp {
         Ok(Self::gen_cookie(&new_token))
     }
 
-    pub fn assert_login(&self, jar: CookieJar) -> Result<SessionToken, String> {
+    pub fn assert_login(&self, jar: CookieJar) -> Result<UserSession, String> {
         let cookie = jar
             .get("SESSION-COOKIE")
             .ok_or("No cookie found")
             .map_err(|e| {
-                trace!("cookie not found: {}", e);
+                warn!("cookie not found: {}", e);
                 "Not logged in"
             })?
             .value();
@@ -195,7 +224,7 @@ impl AuthApp {
         &mut self,
         username: &str,
         password: &str,
-    ) -> Result<(Cookie<'static>, SessionToken), String> {
+    ) -> Result<(Cookie<'static>, UserSession), String> {
         //check that user isn't timed out
 
         let now = chrono::Utc::now();
@@ -208,7 +237,7 @@ impl AuthApp {
             }
         }
 
-        let response = 'login_block: {
+        let user_result = 'login_block: {
             let url = format!(
                 "{}network/user/?username={}",
                 self.knet_api_base_url, username
@@ -224,39 +253,24 @@ impl AuthApp {
 
             if response.status() != StatusCode::OK {
                 break 'login_block Err(format!(
-                    "Login failed, no user found for username {}",
-                    username
+                    "Login failed, auth backend returned status code: {}",
+                    response.status()
                 ));
             }
 
-            //parse response
             let response = response
-                .json::<serde_json::Value>()
+                .json::<UserResponse>()
                 .await
                 .map_err(|_| "Failed to parse response")?;
 
-            let user_count = response
-                .get("count")
-                .and_then(|count| count.as_u64())
-                .ok_or("Failed to get count from K-Net")?;
-
-            if user_count != 1 {
-                break 'login_block Err(format!("Login failed, user count not 1: {}", user_count));
+            if response.count != 1 {
+                break 'login_block Err("Login failed, user not found".to_string());
             }
 
-            let passw_hash = response
-                .get("results")
-                .and_then(|results| results[0].get("password"))
-                .and_then(|password| password.as_str())
-                .ok_or("Failed to get password from K-Net")?;
-
-            let pwd_parts = passw_hash.split('$').collect::<Vec<_>>();
+            let pwd_parts = response.results[0].password.split('$').collect::<Vec<_>>();
 
             if pwd_parts.len() != 3 || pwd_parts[0] != "sha1" {
-                break 'login_block Err(format!(
-                    "Login failed, password hash not sha1: {}",
-                    passw_hash
-                ));
+                break 'login_block Err("Login failed, password hash not sha1".to_string());
             }
 
             let hash = format!("{}{}", pwd_parts[1], password);
@@ -267,10 +281,10 @@ impl AuthApp {
             if hash != pwd_parts[2] {
                 break 'login_block Err("Login failed, wrong password".to_string());
             }
-            Ok::<serde_json::Value, String>(response)
+            Ok(response.results[0].clone())
         }
         .map_err(|e| {
-            debug!(e);
+            warn!(e);
             //increase timeout
             let level = self
                 .timeouts
@@ -296,17 +310,8 @@ impl AuthApp {
         // generate a token for the user
         let token = TokenId::new();
 
-        let username = response
-            .get("results")
-            .and_then(|results| results[0].get("username"))
-            .and_then(|username| username.as_str())
-            .ok_or("Failed to get username from K-Net")?;
-
-        let vlan_url = response
-            .get("results")
-            .and_then(|results| results[0].get("vlan"))
-            .and_then(|vlan| vlan.as_str())
-            .ok_or("Failed to get vlan from K-Net")?;
+        let username = &user_result.username;
+        let vlan_url = &user_result.vlan;
 
         let vlan_response = self
             .client
@@ -316,35 +321,26 @@ impl AuthApp {
             .await
             .map_err(|_| "Failed to send request")?;
 
-        if vlan_response.status() != StatusCode::OK {
-            return Err(format!(
-                "Login failed, no vlan found for username {}",
-                username
-            ));
+        match vlan_response.status() {
+            StatusCode::OK => {}
+            StatusCode::UNAUTHORIZED => {
+                return Err("Failed to authenticate with K-Net".to_string());
+            }
+            StatusCode::NOT_FOUND => {
+                return Err("Vlan not found".to_string());
+            }
+            _ => {
+                return Err("Failed to get vlan".to_string());
+            }
         }
 
-        //parse response
-
         let vlan_response = vlan_response
-            .json::<serde_json::Value>()
+            .json::<VlanResponse>()
             .await
             .map_err(|_| "Failed to parse response")?;
 
-        let room = vlan_response
-            .get("room")
-            .map(|room| {
-                room.to_string().split_whitespace().last().map(|s| {
-                    let mut chars = s.chars();
-                    chars.next_back();
-                    chars.as_str().parse::<u16>()
-                })
-            })
-            .ok_or("Failed to get room from K-Net")?
-            .ok_or("Failed to parse room from K-Net")?
-            .map_err(|_| "Failed to parse room from K-Net".to_string())?;
-
-        let session_token = SessionToken {
-            user: User::new(username.to_string(), room),
+        let session_token = UserSession {
+            user: User::new(username.to_string(), vlan_response.room),
             expiry: chrono::Utc::now().timestamp() as u64 + 60 * 60 * 24, //24 hours
         };
 
