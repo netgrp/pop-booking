@@ -124,7 +124,7 @@ struct UserResult {
     vlan: String,
 }
 
-#[derive(Deserialize, JsonSchema, Clone)]
+#[derive(Deserialize, JsonSchema, Clone, Debug)]
 pub struct VlanResponse {
     #[serde(deserialize_with = "parse_room")]
     room: u16,
@@ -138,9 +138,7 @@ where
     s.split_whitespace()
         .last()
         .map(|s| {
-            let mut chars = s.chars();
-            chars.next_back();
-            chars
+            s.chars()
                 .as_str()
                 .parse::<u16>()
                 .map_err(serde::de::Error::custom)
@@ -338,6 +336,8 @@ impl AuthApp {
             .json::<VlanResponse>()
             .await
             .map_err(|_| "Failed to parse response")?;
+
+        info!("got vlan: {:?}", vlan_response);
 
         let session_token = UserSession {
             user: User::new(username.to_string(), vlan_response.room),
