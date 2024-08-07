@@ -1,293 +1,238 @@
 #![forbid(unsafe_code)]
 #![allow(clippy::type_complexity)]
-use aide::{
-    axum::{
-        routing::{get, post},
-        ApiRouter,
-    },
-    openapi::{Info, OpenApi},
-    redoc::Redoc,
+
+use actix_web::{
+    web::{self, Data},
+    App, HttpServer, HttpResponse, Responder,
+    http::header::{HeaderMap, HeaderValue},
 };
+use actix_web_httpauth::middleware::HttpAuthentication;
+use actix_web_extra::extract::cookie::CookieJar;
 use anyhow::Result;
-use axum::{
-    debug_handler,
-    extract::{Request, State},
-    http::{HeaderMap, HeaderValue, StatusCode},
-    middleware::{self, Next},
-    response::Response,
-    Extension, Json,
-};
-use axum_extra::extract::cookie::CookieJar;
-use backend::{
-    authenticate::UserSession,
-    booker::{self, BookingApp, DeletePayload, NewBooking},
-};
-use backend::{
-    authenticate::{AuthApp, TokenId},
-    booker::ChangeBooking,
-};
+use serde_json::json;
+use std::collections::HashMap;
+use std::env;
 use std::sync::Arc;
 use std::time::Duration;
-use std::{collections::HashMap, env};
 use tokio::sync::RwLock;
-use tower_http::services::ServeDir;
-use tower_http::{
-    catch_panic::CatchPanicLayer, compression::CompressionLayer, timeout::TimeoutLayer,
-};
 use tracing::{debug, error, info};
-use tracing_subscriber::filter::EnvFilter;
+use tracing_subscriber::EnvFilter;
+use utoipa::OpenApi;
+use utoipa_swagger_ui::SwaggerUi;
+
+use backend::{
+    authenticate::{self, AuthApp, TokenId, UserSession},
+    booker::{self, BookingApp, DeletePayload, NewBooking, ChangeBooking},
+};
 
 async fn handle_new_booking(
-    State(booker): State<Arc<RwLock<BookingApp>>>,
+    booker: Data<Arc<RwLock<BookingApp>>>,
     headers: HeaderMap,
-    Json(payload): Json<NewBooking>,
-) -> Result<(StatusCode, String), (StatusCode, String)> {
+    payload: web::Json<NewBooking>,
+) -> Result<impl Responder, actix_web::Error> {
     debug!("Creating new booking: {:?}", payload);
 
     let user = serde_json::from_slice(
         headers
             .get("x-user-id")
-            .ok_or((StatusCode::UNAUTHORIZED, "No user id found".to_string()))?
+            .ok_or(HttpResponse::Unauthorized().body("No user id found"))?
             .as_bytes(),
-    )
-    .map_err(|e| {
+    ).map_err(|e| {
         error!("Error decoding user id: {}", e);
-        (StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
+        HttpResponse::InternalServerError().body(e.to_string())
     })?;
 
     debug!("User: {:?}", user);
 
-    match booker.write().await.handle_new_booking(payload, &user) {
-        Ok(id) => Ok((StatusCode::OK, id)),
+    match booker.write().await.handle_new_booking(payload.into_inner(), &user) {
+        Ok(id) => Ok(HttpResponse::Ok().body(id)),
         Err(e) => {
             error!("Error creating new booking: {}", e);
-            Err((StatusCode::INTERNAL_SERVER_ERROR, e))
+            Err(actix_web::error::ErrorInternalServerError(e))
         }
     }
 }
 
 async fn handle_change_booking(
-    State(booker): State<Arc<RwLock<BookingApp>>>,
+    booker: Data<Arc<RwLock<BookingApp>>>,
     headers: HeaderMap,
-    Json(payload): Json<ChangeBooking>,
-) -> Result<(StatusCode, String), (StatusCode, String)> {
+    payload: web::Json<ChangeBooking>,
+) -> Result<impl Responder, actix_web::Error> {
     debug!("Changing booking: {:?}", payload);
 
     let user = serde_json::from_slice(
         headers
             .get("x-user-id")
-            .ok_or((StatusCode::UNAUTHORIZED, "No user id found".to_string()))?
+            .ok_or(HttpResponse::Unauthorized().body("No user id found"))?
             .as_bytes(),
-    )
-    .map_err(|e| {
+    ).map_err(|e| {
         error!("Error decoding user id: {}", e);
-        (StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
+        HttpResponse::InternalServerError().body(e.to_string())
     })?;
 
-    //check that the user is allowed to change the booking
     if !booker.read().await.assert_id(&payload.id, &user) {
-        return Err((
-            StatusCode::FORBIDDEN,
-            "You are not allowed to delete this booking".to_string(),
-        ));
+        return Err(actix_web::error::ErrorForbidden("You are not allowed to change this booking"));
     }
 
-    match booker.write().await.handle_change_booking(payload) {
-        Ok(()) => Ok((StatusCode::OK, "Booking changed".to_string())),
+    match booker.write().await.handle_change_booking(payload.into_inner()) {
+        Ok(()) => Ok(HttpResponse::Ok().body("Booking changed")),
         Err(e) => {
             error!("Error changing booking: {}", e);
-            Err((StatusCode::INTERNAL_SERVER_ERROR, e))
+            Err(actix_web::error::ErrorInternalServerError(e))
         }
     }
 }
 
 async fn handle_delete(
-    State(booker): State<Arc<RwLock<BookingApp>>>,
+    booker: Data<Arc<RwLock<BookingApp>>>,
     headers: HeaderMap,
-    Json(payload): Json<DeletePayload>,
-) -> Result<(StatusCode, String), (StatusCode, String)> {
+    payload: web::Json<DeletePayload>,
+) -> Result<impl Responder, actix_web::Error> {
     debug!("Deleting booking: {:?}", payload);
 
     let user = serde_json::from_slice(
         headers
             .get("x-user-id")
-            .ok_or((StatusCode::UNAUTHORIZED, "No user id found".to_string()))?
+            .ok_or(HttpResponse::Unauthorized().body("No user id found"))?
             .as_bytes(),
-    )
-    .map_err(|e| {
+    ).map_err(|e| {
         error!("Error decoding user id: {}", e);
-        (StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
+        HttpResponse::InternalServerError().body(e.to_string())
     })?;
 
-    //check that the user is allowed to delete the booking
     if !booker.read().await.assert_id(&payload.id, &user) {
-        return Err((
-            StatusCode::FORBIDDEN,
-            "You are not allowed to delete this booking".to_string(),
-        ));
+        return Err(actix_web::error::ErrorForbidden("You are not allowed to delete this booking"));
     }
 
-    match booker.write().await.handle_delete(payload) {
-        Ok(()) => Ok((StatusCode::OK, "Booking deleted".to_string())),
+    match booker.write().await.handle_delete(payload.into_inner()) {
+        Ok(()) => Ok(HttpResponse::Ok().body("Booking deleted")),
         Err(e) => {
             error!("Error deleting booking: {}", e);
-            Err((StatusCode::INTERNAL_SERVER_ERROR, e))
+            Err(actix_web::error::ErrorInternalServerError(e))
         }
     }
 }
 
 async fn handle_resources(
-    State(app): State<Arc<RwLock<BookingApp>>>,
-) -> Json<HashMap<String, booker::BookableResource>> {
+    app: Data<Arc<RwLock<BookingApp>>>,
+) -> impl Responder {
     match app.read().await.get_resources() {
-        Ok(resources) => Json(resources),
+        Ok(resources) => HttpResponse::Ok().json(resources),
         Err(e) => {
             error!("Error getting resources: {}", e);
-            Json(HashMap::new())
+            HttpResponse::InternalServerError().json(HashMap::new())
         }
     }
 }
 
-async fn handle_bookings(State(app): State<Arc<RwLock<BookingApp>>>) -> Json<Vec<booker::Event>> {
+async fn handle_bookings(app: Data<Arc<RwLock<BookingApp>>>) -> impl Responder {
     match app.read().await.get_bookings() {
-        Ok(bookings) => Json(bookings),
+        Ok(bookings) => HttpResponse::Ok().json(bookings),
         Err(e) => {
             error!("Error getting bookings: {}", e);
-            Json(vec![])
+            HttpResponse::InternalServerError().json(vec![])
         }
     }
 }
 
-#[debug_handler]
-async fn hande_login(
-    State(auth_app): State<Arc<RwLock<AuthApp>>>,
+async fn handle_login(
+    auth_app: Data<Arc<RwLock<AuthApp>>>,
     cookies: CookieJar,
-    Json(payload): Json<backend::authenticate::LoginPayload>,
-) -> Result<(StatusCode, CookieJar, Json<UserSession>), (StatusCode, String)> {
+    payload: web::Json<authenticate::LoginPayload>,
+) -> Result<impl Responder, actix_web::Error> {
     let mut auth_app = auth_app.write().await;
-    match auth_app
-        .authenticate_user(&payload.username, &payload.password)
-        .await
-    {
+    match auth_app.authenticate_user(&payload.username, &payload.password).await {
         Ok((cookie, session_token)) => {
-            debug!("login succesful");
-
-            Ok((StatusCode::OK, cookies.add(cookie), Json(session_token)))
+            debug!("login successful");
+            Ok(HttpResponse::Ok().cookie(cookie).json(session_token))
         }
-        Err(e) => Err((StatusCode::INTERNAL_SERVER_ERROR, e)),
+        Err(e) => Err(actix_web::error::ErrorInternalServerError(e)),
     }
 }
 
 async fn check_login(
-    State(auth_app): State<Arc<RwLock<AuthApp>>>,
+    auth_app: Data<Arc<RwLock<AuthApp>>>,
     cookies: CookieJar,
-) -> Result<(StatusCode, Json<UserSession>), StatusCode> {
-    let session_token = auth_app
-        .read()
-        .await
-        .assert_login(cookies)
-        .map_err(|_| StatusCode::OK)?;
-
-    Ok((StatusCode::ACCEPTED, Json(session_token)))
+) -> Result<impl Responder, actix_web::Error> {
+    let session_token = auth_app.read().await.assert_login(cookies).map_err(|_| HttpResponse::Unauthorized())?;
+    Ok(HttpResponse::Accepted().json(session_token))
 }
 
 async fn handle_logout(
-    State(auth_app): State<Arc<RwLock<AuthApp>>>,
+    auth_app: Data<Arc<RwLock<AuthApp>>>,
     cookies: CookieJar,
-) -> Result<StatusCode, StatusCode> {
+) -> Result<impl Responder, actix_web::Error> {
     let token_id = TokenId::try_from(
-        cookies
-            .get("SESSION-COOKIE")
-            .ok_or("No cookie found")
-            .map_err(|e| {
-                error!("Error logging out: {}", e);
-                StatusCode::INTERNAL_SERVER_ERROR
-            })?
-            .value(),
-    )
-    .map_err(|e| {
+        cookies.get("SESSION-COOKIE")
+            .ok_or(HttpResponse::Unauthorized().body("No cookie found"))?
+            .value()
+    ).map_err(|e| {
         error!("Error logging out: {}", e);
-        StatusCode::INTERNAL_SERVER_ERROR
+        HttpResponse::InternalServerError().body(e.to_string())
     })?;
 
     auth_app.write().await.logout(&token_id).map_err(|e| {
         error!("Error logging out: {}", e);
-        StatusCode::INTERNAL_SERVER_ERROR
+        HttpResponse::InternalServerError().body(e.to_string())
     })?;
-    debug!("Logout succesful");
-    Ok(StatusCode::OK)
+    debug!("Logout successful");
+    Ok(HttpResponse::Ok().finish())
 }
 
-async fn health_check() -> StatusCode {
-    // TODO: check if anything is actually healthy. But really, if this function is called, we are healthy. No external dependencies
-    StatusCode::OK
+async fn health_check() -> impl Responder {
+    HttpResponse::Ok().finish()
 }
 
-fn auth_api(auth_app: Arc<RwLock<AuthApp>>) -> ApiRouter {
-    ApiRouter::new()
-        .api_route("/login", post(hande_login).get(check_login))
-        .api_route("/logout", get(handle_logout))
-        .api_route("/heartbeat", get(health_check))
-        .with_state(auth_app)
+#[utoipa::path(
+    post,
+    path = "/api/login",
+    responses(
+        (status = 200, description = "Login successful", body = UserSession),
+        (status = 401, description = "Unauthorized")
+    ),
+    request_body = authenticate::LoginPayload,
+    security(
+        ("cookieAuth" = [])
+    )
+)]
+async fn auth_api(auth_app: Data<Arc<RwLock<AuthApp>>>) -> impl Responder {
+    HttpServer::new(move || {
+        App::new()
+            .app_data(auth_app.clone())
+            .service(
+                web::scope("/api")
+                    .service(
+                        web::scope("/auth")
+                            .route("/login", web::post().to(handle_login))
+                            .route("/logout", web::get().to(handle_logout))
+                            .route("/heartbeat", web::get().to(health_check))
+                    )
+                    .service(
+                        web::scope("/book")
+                            .service(
+                                web::scope("/secure")
+                                    .wrap(HttpAuthentication::bearer(check_session))
+                                    .route("/new", web::post().to(handle_new_booking))
+                                    .route("/delete", web::post().to(handle_delete))
+                                    .route("/change", web::post().to(handle_change_booking))
+                            )
+                            .route("/events", web::get().to(handle_bookings))
+                            .route("/resources", web::get().to(handle_resources))
+                    )
+            )
+    })
+    .bind(("0.0.0.0", 8080))?
+    .run()
+    .await?;
+
+    Ok(())
 }
 
-pub async fn check_session(
-    State(auth_app): State<Arc<RwLock<AuthApp>>>,
-    cookies: CookieJar,
-    request: Request,
-    next: Next,
-) -> Result<Response, StatusCode> {
-    let session = auth_app
-        .read()
-        .await
-        .assert_login(cookies)
-        .map_err(|_| StatusCode::UNAUTHORIZED)?;
-
-    debug!("User authenticated");
-
-    let (mut parts, body) = request.into_parts();
-
-    parts.headers.insert(
-        "x-user-id",
-        HeaderValue::from_str(
-            serde_json::to_string(&session.user)
-                .map_err(|e| {
-                    error!("Error serializing user id: {:?}", e);
-                    StatusCode::INTERNAL_SERVER_ERROR
-                })?
-                .as_str(),
-        )
-        .map_err(|e| {
-            error!("Error inserting header: {:?}", e);
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?,
-    );
-
-    let request = Request::from_parts(parts, body);
-    debug!("Request: {:?}", request);
-    Ok(next.run(request).await)
+async fn serve_api() -> impl Responder {
+    HttpResponse::Ok().json(api)
 }
 
-fn booking_locked_endpoints(book_app: Arc<RwLock<BookingApp>>) -> ApiRouter {
-    ApiRouter::new()
-        .api_route("/new", post(handle_new_booking))
-        .api_route("/delete", post(handle_delete))
-        .api_route("/change", post(handle_change_booking))
-        .with_state(book_app)
-}
-
-fn booking_open_endpoints(book_app: Arc<RwLock<BookingApp>>) -> ApiRouter {
-    ApiRouter::new()
-        .api_route("/events", get(handle_bookings))
-        .api_route("/resources", get(handle_resources))
-        .with_state(book_app)
-}
-
-async fn serve_api(Extension(api): Extension<OpenApi>) -> Json<OpenApi> {
-    Json(api)
-}
-
-#[tokio::main]
+#[actix_web::main]
 async fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_target(false)
@@ -296,76 +241,54 @@ async fn main() -> Result<()> {
 
     dotenvy::dotenv().unwrap_or_default();
 
-    let frontend = ServeDir::new(env::var("FRONTEND_DIR")?);
+    let frontend = env::var("FRONTEND_DIR")?;
 
     info!("Starting server");
 
-    let book_app = Arc::new(RwLock::new(BookingApp::from_config(&env::var(
-        "CONFIG_DIR",
-    )?)?));
+    let book_app = Arc::new(RwLock::new(BookingApp::from_config(&env::var("CONFIG_DIR")?)?));
 
-    book_app
-        .write()
-        .await
-        .load_bookings(&env::var("BOOKINGS_DIR")?)?;
+    book_app.write().await.load_bookings(&env::var("BOOKINGS_DIR")?)?;
 
     let auth_app = Arc::new(RwLock::new(AuthApp::new(
         env::var("KNET_API_BASE_URL")?,
         env::var("KNET_API_USERNAME")?,
         env::var("KNET_API_PASSWORD")?,
     )?));
-    let cleaner = auth_app.clone();
 
-    tokio::spawn(async {
+    let cleaner = auth_app.clone();
+    tokio::spawn(async move {
         AuthApp::start_token_cleanup(cleaner).await;
     });
 
     let cleaner = auth_app.clone();
-
-    tokio::spawn(async {
+    tokio::spawn(async move {
         AuthApp::start_timeout_cleanup(cleaner).await;
     });
 
-    let middleware = tower::ServiceBuilder::new()
-        .layer(CompressionLayer::new().quality(tower_http::CompressionLevel::Fastest))
-        .layer(TimeoutLayer::new(Duration::from_secs(30)))
-        .layer(CatchPanicLayer::new());
+    let api = OpenApi::new("POP booking system API", "1.0")
+        .description(Some("This is the API for the POP booking system"))
+        .info();
 
-    let auth_middleware = tower::ServiceBuilder::new().layer(middleware::from_fn_with_state(
-        auth_app.clone(),
-        check_session,
-    ));
+    let app = auth_api(auth_app.clone());
 
-    // build our application with api_routes
-    let app = ApiRouter::new()
-        .nest_api_service(
-            "/api/book/secure/",
-            booking_locked_endpoints(book_app.clone()).layer(auth_middleware),
-        )
-        .nest_api_service("/api/book/", booking_open_endpoints(book_app.clone()))
-        .nest_api_service("/api/", auth_api(auth_app.clone()))
-        .nest_service("/", frontend)
-        .route("/redoc", Redoc::new("/api.json").axum_route())
-        .route("/api.json", get(serve_api))
-        .layer(middleware);
+    let server = HttpServer::new(move || {
+        App::new()
+            .data(auth_app.clone())
+            .data(book_app.clone())
+            .data(api.clone())
+            .wrap(middleware::NormalizePath::default())
+            .service(
+                SwaggerUi::new("/swagger-ui")
+                    .url("/api-doc/openapi.json", api.clone())
+                    .finish(),
+            )
+            .route("/api-doc/openapi.json", web::get().to(serve_api))
+            .service(web::scope("/api").configure(auth_api))
+            .service(fs::Files::new("/", frontend).index_file("index.html"))
+    });
 
-    let mut api = OpenApi {
-        info: Info {
-            description: Some("POP booking system API".to_string()),
-            ..Info::default()
-        },
-        ..OpenApi::default()
-    };
+    let listener = TcpListener::bind(format!("0.0.0.0:{}", env::var("PORT")?)).await?;
+    server.listen(listener).await?;
 
-    // run our app with hyper, listening globally on port 3000
-    let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{}", env::var("PORT")?)).await?;
-    axum::serve(
-        listener,
-        app.finish_api(&mut api)
-            // Expose the documentation to the handlers.
-            .layer(Extension(api))
-            .into_make_service(),
-    )
-    .await?;
     Ok(())
 }

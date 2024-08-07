@@ -12,8 +12,6 @@ description = "Backend web server for pop-book a booking system for the POP dorm
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-axum = {version = "0.7.4", features = ["macros","json"]}
-axum-extra = {version = "0.9", features = ["cookie"]}
 tokio = { version = "1.35.1" , features = ["macros","rt-multi-thread"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
@@ -24,11 +22,11 @@ serde_json = "1.0"
 dotenvy = "0.15"
 rand = "0.8"
 rand_hc = "0.3"
-chrono = { version = "0.4", features = ["serde"] }
 reqwest = { version = "0.12", features = ["json","rustls-tls"] , default-features = false }
 sha1 = "0.10"
 anyhow = { version = "1.0", features = ["backtrace"] }
 base64 = "0.22"
 http-body-util = "0.1"
-aide = {version = "0.13.0", features = ["axum","axum-extra-cookie","redoc"]}
-schemars = { version = "0.8", features = ["chrono"] }
+utoipa = { version = "4.2.3", features = ["actix_extras", "chrono", "uuid"] }
+utoipa-redoc = { version = "4.0.0", features = ["actix-web"] }
+actix-web = "4.8.0"
