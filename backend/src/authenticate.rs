@@ -120,7 +120,7 @@ struct UserResponse {
 #[derive(Deserialize, JsonSchema, Clone)]
 struct UserResult {
     username: String,
-    password: String,
+    password: Option<String>,
     vlan: String,
 }
 
@@ -263,7 +263,16 @@ impl AuthApp {
                 break 'login_block Err("Login failed, user not found".to_string());
             }
 
-            let pwd_parts = response.results[0].password.split('$').collect::<Vec<_>>();
+            if response.results[0].password.is_none() {
+                break 'login_block Err("Login failed, password not set".to_string());
+            }
+
+            let pwd_parts = response.results[0]
+                .password
+                .as_ref()
+                .unwrap()
+                .split('$')
+                .collect::<Vec<_>>();
 
             if pwd_parts.len() != 3 || pwd_parts[0] != "sha1" {
                 break 'login_block Err("Login failed, password hash not sha1".to_string());
@@ -419,4 +428,140 @@ impl AuthApp {
             info!("Cleaning timeouts done, removed {} timeouts", diff);
         }
     }
+
+    // pub async fn view_user(&self, username: &str) -> Result<UserResult, String> {
+    //     let url = format!(
+    //         "{}network/user/?username={}",
+    //         self.knet_api_base_url, username
+    //     );
+    //     println!("url: {}", url);
+
+    //     let response = self
+    //         .client
+    //         .get(&url)
+    //         .basic_auth(&self.knet_username, Some(&self.knet_password))
+    //         .send()
+    //         .await
+    //         .map_err(|_| format!("Failed to send request"))?;
+
+    //     if response.status() != StatusCode::OK {
+    //         return Err("Failed to get user".to_string());
+    //     }
+    //     let json_response = response.json::<serde_json::Value>().await.map_err(|e| {
+    //         warn!("{} for response ", e);
+    //         "Failed to parse user response from k-net login server"
+    //     })?;
+    //     println!("got response: {}", json_response);
+
+    //     // print pretty printed json
+    //     // println!("{}", response.text().await.unwrap());
+
+    //     // let response = response.json::<UserResponse>().await.map_err(|e| {
+    //     //     warn!("{} for response ", e);
+    //     //     "Failed to parse user response from k-net login server"
+    //     // })?;
+
+    //     // if response.count != 1 {
+    //     //     return Err("User not found".to_string());
+    //     // }
+
+    //     Err("User not found".to_string())
+    // }
 }
+
+// #[cfg(test)]
+// mod tests {
+//     use super::*;
+//     use std::collections::HashMap;
+//     use std::env;
+//     use std::time::Duration;
+//     use tokio::sync::RwLock;
+//     use tokio::time::sleep;
+
+//     #[tokio::test]
+//     async fn test_view_user() -> Result<()> {
+//         dotenvy::dotenv().unwrap_or_default();
+//         let auth_app = Arc::new(RwLock::new(AuthApp::new(
+//             env::var("KNET_API_BASE_URL")?,
+//             env::var("KNET_API_USERNAME")?,
+//             env::var("KNET_API_PASSWORD")?,
+//         )?));
+//         let username = "thomas.s.conrad@gmail.com";
+//         let user = auth_app.read().await.view_user(username).await.unwrap();
+//         assert_eq!(user.username, username);
+//         Ok(())
+//     }
+
+//     #[tokio::test]
+//     async fn test_authenticate_user_fail() {
+//         let mut app = AuthApp::new(
+//             "http://localhost:8000/".to_string(),
+//             "admin".to_string(),
+//             "admin".to_string(),
+//         )
+//         .unwrap();
+//         let result = app.authenticate_user("admin", "wrong").await;
+//         assert!(result.is_err());
+//         assert_eq!(app.tokens.len(), 0);
+//     }
+
+//     #[tokio::test]
+//     async fn test_authenticate_user_timeout() {
+//         let mut app = AuthApp::new(
+//             "http://localhost:8000/".to_string(),
+//             "admin".to_string(),
+//             "admin".to_string(),
+//         )
+//         .unwrap();
+//         let result = app.authenticate_user("admin", "wrong").await;
+//         assert!(result.is_err());
+//         assert_eq!(app.tokens.len(), 0);
+//         assert_eq!(app.timeouts.len(), 1);
+//         sleep(Duration::from_secs(1)).await;
+//         let result = app.authenticate_user("admin", "wrong").await;
+//         assert!(result.is_err());
+//         assert_eq!(app.tokens.len(), 0);
+//         assert_eq!(app.timeouts.len(), 1);
+//         sleep(Duration::from_secs(1)).await;
+//         let result = app.authenticate_user("admin", "wrong").await;
+//         assert!(result.is_err());
+//         assert_eq!(app.tokens.len(), 0);
+//         assert_eq!(app.timeouts.len(), 1);
+//         sleep(Duration::from_secs(1)).await;
+//         let result = app.authenticate_user("admin", "admin").await;
+//         assert!(result.is_ok());
+//         assert_eq!(app.tokens.len(), 1);
+//         assert_eq!(app.timeouts.len(), 0);
+//         app.logout(&TokenId::try_from(result.unwrap().0.value()).unwrap())
+//             .unwrap();
+//     }
+
+//     #[tokio::test]
+//     async fn test_authenticate_user_timeout_cleanup() {
+//         let app = Arc::new(RwLock::new(
+//             AuthApp::new(
+//                 "http://localhost:8000/".to_string(),
+//                 "admin".to_string(),
+//                 "admin".to_string(),
+//             )
+//             .unwrap(),
+//         ));
+//         let app1 = app.clone();
+//         let app2 = app.clone();
+//         let handle1 = tokio::spawn(async move { AuthApp::start_timeout_cleanup(app1).await });
+//         let handle2 = tokio::spawn(async move { AuthApp::start_timeout_cleanup(app2).await });
+//         sleep(Duration::from_secs(1)).await;
+//         app.write()
+//             .await
+//             .timeouts
+//             .insert("admin".to_string(), (chrono::Utc::now(), 0));
+//         sleep(Duration::from_secs(1)).await;
+//         assert_eq!(app.read().await.timeouts.len(), 1);
+//         sleep(Duration::from_secs(1)).await;
+//         assert_eq!(app.read().await.timeouts.len(), 0);
+//         sleep(Duration::from_secs(1)).await;
+//         assert_eq!(app.read().await.timeouts.len(), 0);
+//         handle1.abort();
+//         handle2.abort();
+//     }
+// }
