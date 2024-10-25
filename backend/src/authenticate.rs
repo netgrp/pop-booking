@@ -252,9 +252,10 @@ impl AuthApp {
                     response.status()
                 ));
             }
+            info!("got response: {:?}", response);
 
             let response = response.json::<UserResponse>().await.map_err(|e| {
-                warn!("{}", e);
+                warn!("{} for response ", e);
                 format!("Failed to parse user response from k-net login server")
             })?;
 
