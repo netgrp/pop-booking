@@ -200,10 +200,7 @@ impl AuthApp {
         let cookie = jar
             .get("SESSION-COOKIE")
             .ok_or("No cookie found")
-            .map_err(|e| {
-                warn!("cookie not found: {}", e);
-                "Not logged in"
-            })?
+            .map_err(|_| "Not logged in")?
             .value();
 
         let token_id = TokenId::try_from(cookie)?;
@@ -256,10 +253,10 @@ impl AuthApp {
                 ));
             }
 
-            let response = response
-                .json::<UserResponse>()
-                .await
-                .map_err(|_| "Failed to parse response")?;
+            let response = response.json::<UserResponse>().await.map_err(|e| {
+                warn!("{}", e);
+                format!("Failed to parse user response from k-net login server")
+            })?;
 
             if response.count != 1 {
                 break 'login_block Err("Login failed, user not found".to_string());
@@ -332,10 +329,12 @@ impl AuthApp {
             }
         }
 
-        let vlan_response = vlan_response
-            .json::<VlanResponse>()
-            .await
-            .map_err(|_| "Failed to parse response")?;
+        let vlan_response = vlan_response.json::<VlanResponse>().await.map_err(|e| {
+            warn!("{}", e);
+            "Failed to parse vlan response from k-net login server"
+        })?;
+
+        info!("got vlan: {:?}", vlan_response);
 
         info!("got vlan: {:?}", vlan_response);
 
