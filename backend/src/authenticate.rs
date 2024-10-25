@@ -336,6 +336,8 @@ impl AuthApp {
 
         info!("got vlan: {:?}", vlan_response);
 
+        info!("got vlan: {:?}", vlan_response);
+
         let session_token = UserSession {
             user: User::new(username.to_string(), vlan_response.room),
             expiry: chrono::Utc::now().timestamp() as u64 + 60 * 60 * 24, //24 hours
