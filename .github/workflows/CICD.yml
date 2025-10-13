@@ -1,13 +1,11 @@
 name: Build and Release
 
-on:
-  push:
-    branches:
-      - "release"
-
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
+
+on:
+  workflow_dispatch:
 
 jobs:
   build_amd64:
