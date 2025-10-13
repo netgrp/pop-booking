@@ -1,4 +1,4 @@
-# POP Booking
+# POP Booking [![Build and Release](https://github.com/netgrp/pop-booking/actions/workflows/CICD.yml/badge.svg)](https://github.com/netgrp/pop-booking/actions/workflows/CICD.yml)
 
 This is so far a hastily written frontend and backend for the new pop booking system. The idea was to minimize external dependencies
 and create a piece of software that will last for a long time. The only real dependency there is in the program currently is the 
