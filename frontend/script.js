@@ -25,7 +25,11 @@ document.addEventListener('keydown', function (event) {
   if (event.key === 'Escape') {
     Swal.clickCancel();
   }
+  // Prevent Enter from confirming if Select2 dropdown is open
   if (event.key === "Enter") {
+    if (document.querySelector('.select2-container--open')) {
+      return;
+    }
     Swal.clickConfirm();
   }
 
