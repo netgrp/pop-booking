@@ -559,8 +559,8 @@ async function getResources(start, end) {
         let startday = parseInt(start.split("-")[2].split("T")[0]);
         let endmonth = parseInt(end.split("-")[1]);
         let endday = parseInt(end.split("-")[2].split("T")[0]);
-        if ((is_in_range(dates.start, dates.end, [startmonth + 1, startday])) ||
-          (is_in_range(dates.start, dates.end, [endmonth + 1, endday]))) {
+        if ((is_in_range(dates.start, dates.end, [startmonth, startday])) ||
+          (is_in_range(dates.start, dates.end, [endmonth, endday]))) {
           continue outer;
         }
 
