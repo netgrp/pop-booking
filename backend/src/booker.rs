@@ -386,8 +386,11 @@ impl BookingApp {
                 let user_bookings = self
                     .bookings
                     .values()
-                    .filter(|prior_booking| prior_booking.user == booking.user)
-                    .filter(|prior_booking| prior_booking.end_time > now)
+                    .filter(|prior_booking| {
+                        prior_booking.user == booking.user
+                            && prior_booking.resource_name == "meetingroom"
+                            && prior_booking.end_time > now
+                    })
                     .count();
 
                 if user_bookings >= 2 {
