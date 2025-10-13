@@ -296,7 +296,7 @@ impl BookingApp {
                 // at least in general
 
                 let start_month_day = (booking.start_time.month(), booking.start_time.day());
-                let end_month_day = (booking.start_time.month(), booking.start_time.day());
+                let end_month_day = (booking.end_time.month(), booking.end_time.day());
 
                 debug!("Start month day: {:?}", start_month_day);
                 debug!("End month day: {:?}", end_month_day);
