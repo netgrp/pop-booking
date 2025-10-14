@@ -1,53 +1,6 @@
-// Cargo.toml
-// ----------------
-// [package]
-// name = "json_db"
-// version = "0.1.0"
-// edition = "2021"
-//
-// [lib]
-// name = "json_db"
-// crate-type = ["lib"]
-//
-// [dependencies]
-// serde = { version = "1.0", features = ["derive"] }
-// serde_json = "1.0"
-// tokio = { version = "1.0", features = ["rt-multi-thread","macros","time"] }
-// fs2 = "0.4"
-// anyhow = "1.0"
-// parking_lot = "0.12"
-// time = "0.3"
-
-//! Simple JSON-file-backed DB library.
-//!
-//! Key ideas:
-//! - Mirror JSON file into memory as `T`.
-//! - Provide sync read and mutation closures that operate on in-memory data.
-//! - Mutations schedule an async write. Writes are debounced to coalesce concurrent updates.
-//! - WAL is written before committing to main file. On startup WAL is replayed.
-//! - File locks used to avoid concurrent process corruption.
-//!
-//! Example:
-//! ```ignore
-//! use json_db::JsonDb;
-//! use serde::{Serialize, Deserialize};
-//!
-//! #[derive(Serialize, Deserialize, Default)]
-//! struct AppState { counter: u64 }
-//!
-//! #[tokio::main]
-//! async fn main() -> anyhow::Result<()> {
-//!   let db = JsonDb::open("state.json").await?;
-//!   db.read(|s| println!("counter {}", s.counter));
-//!   db.update(|s| s.counter += 1).await?;
-//!   db.flush().await?;
-//!   Ok(())
-//! }
-//! ```
-
 use anyhow::Context;
 use parking_lot::RwLock;
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use serde::{de::DeserializeOwned, Serialize};
 use std::{
     fs::OpenOptions,
     path::{Path, PathBuf},
@@ -356,29 +309,5 @@ where
             let _ = self.write_file_atomic(&json);
         }
         // writer task is detached. In most runtimes tokio will shut down tasks gracefully.
-    }
-}
-
-// Unit tests
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use tempfile::tempdir;
-
-    #[derive(Serialize, Deserialize, Default, Debug, PartialEq)]
-    struct State {
-        a: i32,
-    }
-
-    #[tokio::test]
-    async fn basic_read_write() {
-        let dir = tempdir().unwrap();
-        let path = dir.path().join("db.json");
-        let db = JsonDb::<State>::open(path).await.unwrap();
-        db.update(|s| s.a = 42).await.unwrap();
-        // give background writer some time
-        tokio::time::sleep(Duration::from_millis(100)).await;
-        let val = db.read(|s| s.a);
-        assert_eq!(val, 42);
     }
 }

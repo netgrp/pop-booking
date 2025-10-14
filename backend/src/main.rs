@@ -57,7 +57,12 @@ async fn handle_new_booking(
 
     debug!("User: {:?}", user);
 
-    match booker.write().await.handle_new_booking(payload, &user) {
+    match booker
+        .write()
+        .await
+        .handle_new_booking(payload, &user)
+        .await
+    {
         Ok(id) => Ok((StatusCode::OK, id)),
         Err(e) => {
             error!("Error creating new booking: {}", e);
@@ -92,7 +97,7 @@ async fn handle_change_booking(
         ));
     }
 
-    match booker.write().await.handle_change_booking(payload) {
+    match booker.write().await.handle_change_booking(payload).await {
         Ok(()) => Ok((StatusCode::OK, "Booking changed".to_string())),
         Err(e) => {
             error!("Error changing booking: {}", e);
@@ -127,7 +132,7 @@ async fn handle_delete(
         ));
     }
 
-    match booker.write().await.handle_delete(payload) {
+    match booker.write().await.handle_delete(payload).await {
         Ok(()) => Ok((StatusCode::OK, "Booking deleted".to_string())),
         Err(e) => {
             error!("Error deleting booking: {}", e);
@@ -300,14 +305,9 @@ async fn main() -> Result<()> {
 
     info!("Starting server");
 
-    let book_app = Arc::new(RwLock::new(BookingApp::from_config(&env::var(
-        "CONFIG_DIR",
-    )?)?));
-
-    book_app
-        .write()
-        .await
-        .load_bookings(&env::var("BOOKINGS_DIR")?)?;
+    let book_app = Arc::new(RwLock::new(
+        BookingApp::from_config(&env::var("CONFIG_DIR")?, &env::var("BOOKINGS_DIR")?).await?,
+    ));
 
     let auth_app = Arc::new(RwLock::new(AuthApp::new(
         env::var("KNET_API_BASE_URL")?,

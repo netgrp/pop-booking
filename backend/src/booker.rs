@@ -1,11 +1,11 @@
 use super::hourmin::HourMin;
+use super::json_db::JsonDb;
 use anyhow::{anyhow, Result};
 use chrono::{DateTime, Datelike, Utc};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{self};
 use std::collections::HashMap;
-use std::env;
 use std::hash::{Hash, Hasher};
 use tracing::{debug, info};
 
@@ -134,7 +134,8 @@ struct Booking {
 }
 
 pub struct BookingApp {
-    bookings: HashMap<u32, Booking>,
+    // bookings: HashMap<u32, Booking>,
+    db: JsonDb<HashMap<u32, Booking>>,
     resources: HashMap<String, Resource>,
     resource_periods: HashMap<String, ResourcePeriod>,
 }
@@ -157,7 +158,7 @@ pub struct BookableResource {
 }
 
 impl BookingApp {
-    pub fn from_config(config_dir: &str) -> Result<Self> {
+    pub async fn from_config(config_dir: &str, bookings_dir: &str) -> Result<Self> {
         //load using serde_json
         let resources_path = format!("{config_dir}/resources.json");
         info!("Loading resources from: {}", resources_path);
@@ -172,32 +173,15 @@ impl BookingApp {
         let resource_periods: HashMap<String, ResourcePeriod> =
             serde_json::from_str(&resource_periods_content)?;
 
+        let bookings_path = format!("{bookings_dir}/bookings.json");
+        let db = JsonDb::open(bookings_path)
+            .await
+            .map_err(|e| anyhow!("Failed to open bookings database: {}", e))?;
         Ok(Self {
-            bookings: HashMap::new(),
+            db,
             resources,
             resource_periods,
         })
-    }
-
-    pub fn load_bookings(&mut self, bookings_dir: &str) -> Result<()> {
-        //load bookings from file
-        let bookings_path = format!("{bookings_dir}/bookings.json");
-        info!("Loading bookings from: {}", bookings_path);
-
-        //check if file exists
-        if !std::path::Path::new(&bookings_path).exists() {
-            info!("Bookings file does not exist, creating empty file");
-            std::fs::write(&bookings_path, "{}")?;
-        }
-
-        let bookings_content = std::fs::read_to_string(bookings_path)?;
-        self.bookings = serde_json::from_str(&bookings_content)
-            .map_err(|e| anyhow!("Loading of bookings failed: {}", e))?;
-
-        // //build bookings json
-        // self.cached_resource_json = Some(self.get_event_json().unwrap());
-
-        Ok(())
     }
 
     pub fn get_resources(&self) -> Result<HashMap<String, BookableResource>> {
@@ -233,30 +217,24 @@ impl BookingApp {
 
     // https://fullcalendar.io/docs/event-parsing
     pub fn get_bookings(&self) -> Result<Vec<Event>, serde_json::Error> {
-        // if let Some(cached_string) = &self.cached_resource_json {
-        //     return Ok(cached_string.clone());
-        // }
-        self.get_event_json()
-    }
+        let events = self.db.read(|bookings| {
+            bookings
+                .iter()
+                .map(|(&id, booking)| Event {
+                    title: format!(
+                        "Room {}, {}",
+                        booking.user.room, self.resources[&booking.resource_name].name
+                    ),
+                    id,
+                    start: booking.start_time.to_rfc3339(),
+                    end: booking.end_time.to_rfc3339(),
+                    owner: booking.user.room,
+                    color: self.resources[&booking.resource_name].color.clone(),
+                })
+                .collect::<Vec<Event>>()
+        });
 
-    fn get_event_json(&self) -> Result<Vec<Event>, serde_json::Error> {
-        let bookings_json = self
-            .bookings
-            .iter()
-            .map(|(&id, booking)| Event {
-                title: format!(
-                    "Room {}, {}",
-                    booking.user.room, self.resources[&booking.resource_name].name
-                ),
-                id,
-                start: booking.start_time.to_rfc3339(),
-                end: booking.end_time.to_rfc3339(),
-                owner: booking.user.room,
-                color: self.resources[&booking.resource_name].color.clone(),
-            })
-            .collect::<Vec<Event>>();
-
-        Ok(bookings_json)
+        Ok(events)
     }
 
     fn check_available(&self, allow_id: Option<u32>, booking: &Booking) -> Result<(), String> {
@@ -359,11 +337,13 @@ impl BookingApp {
             }
         }
 
-        if self.bookings.iter().any(|(&id, existing_booking)| {
-            booking.resource_name == existing_booking.resource_name
-                && booking.start_time < existing_booking.end_time
-                && booking.end_time > existing_booking.start_time
-                && Some(id) != allow_id
+        if self.db.read(|bookings| {
+            bookings.iter().any(|(&id, existing_booking)| {
+                booking.resource_name == existing_booking.resource_name
+                    && booking.start_time < existing_booking.end_time
+                    && booking.end_time > existing_booking.start_time
+                    && Some(id) != allow_id
+            })
         }) {
             return Err("Booking overlaps with another booking".to_string());
         }
@@ -383,15 +363,16 @@ impl BookingApp {
             }
             // 2: check that no more than 2 bookings are made in the future by the same user
             else {
-                let user_bookings = self
-                    .bookings
-                    .values()
-                    .filter(|prior_booking| {
-                        prior_booking.user == booking.user
-                            && prior_booking.resource_name == "meetingroom"
-                            && prior_booking.end_time > now
-                    })
-                    .count();
+                let user_bookings = self.db.read(|bookings| {
+                    bookings
+                        .values()
+                        .filter(|prior_booking| {
+                            prior_booking.user == booking.user
+                                && prior_booking.resource_name == "meetingroom"
+                                && prior_booking.end_time > now
+                        })
+                        .count()
+                });
 
                 if user_bookings >= 2 {
                     return Err("Attempt to create more than 2 bookings in the future. Not allowed for the meeting room.".to_string());
@@ -402,7 +383,7 @@ impl BookingApp {
         Ok(())
     }
 
-    pub fn handle_new_booking(
+    pub async fn handle_new_booking(
         &mut self,
         booking: NewBooking,
         user: &User,
@@ -422,145 +403,112 @@ impl BookingApp {
             return Err("No resources selected".to_string());
         }
 
-        let results = booking
-            .resource_names
-            .into_iter()
-            .map(|resource_name| -> Result<u32, String> {
-                let booking = Booking {
-                    user: user.clone(),
-                    resource_name,
-                    start_time: booking.start_time,
-                    end_time: booking.end_time,
-                };
+        let start_time = booking.start_time;
+        let end_time = booking.end_time;
+        let mut created_ids: Vec<u32> = Vec::new();
 
-                self.check_available(None, &booking)?;
+        for resource_name in booking.resource_names {
+            let new_booking = Booking {
+                user: user.clone(),
+                resource_name,
+                start_time,
+                end_time,
+            };
 
-                let mut id = rand::random();
-
-                //ensure id is unique. This is definitely not necessary, but just in case
-                while self.bookings.contains_key(&id) {
-                    id = rand::random();
+            if let Err(e) = self.check_available(None, &new_booking) {
+                for id in &created_ids {
+                    let _ = self.delete_booking(id).await;
                 }
+                return Err(e);
+            }
 
-                self.add_booking(&id, booking)?;
-                Ok(id)
-            })
-            .collect::<Vec<_>>();
+            let mut id: u32 = rand::random();
+            while self.db.read(|bookings| bookings.contains_key(&id)) {
+                id = rand::random();
+            }
 
-        if results.iter().any(|result| result.is_err()) {
-            //all bookings should be successful
-            results
-                .iter()
-                .filter(|result| result.is_ok())
-                .for_each(|result| {
-                    let id = result.as_ref().unwrap();
-                    self.delete_booking(id).unwrap();
-                });
-            // compile error string
-            return Err(results
-                .iter()
-                .filter(|result| result.is_err())
-                .map(|result| result.as_ref().unwrap_err().clone())
-                .collect::<Vec<String>>()
-                .join(", "));
+            if let Err(e) = self.add_booking(&id, new_booking).await {
+                for prev_id in &created_ids {
+                    let _ = self.delete_booking(prev_id).await;
+                }
+                return Err(e);
+            }
+
+            created_ids.push(id);
         }
 
         Ok("Booking successful".to_string())
     }
-
-    pub fn handle_delete(&mut self, payload: DeletePayload) -> Result<(), String> {
+    pub async fn handle_delete(&mut self, payload: DeletePayload) -> Result<(), String> {
         let id = payload.id;
 
-        if !self.bookings.contains_key(&id) {
+        if !self.db.read(|bookings| bookings.contains_key(&id)) {
             return Err("Booking does not exist".to_string());
         }
 
         //dont allow deletion of past bookings
-        if self.bookings[&id].start_time < Utc::now() {
+        if self
+            .db
+            .read(|bookings| bookings[&id].start_time < Utc::now())
+        {
             return Err("Booking is in the past".to_string());
         }
 
-        self.bookings.remove(&id);
-
-        // //build bookings json
-        // self.cached_resource_json = Some(self.get_event_json().unwrap());
-
-        //save to file
-        let bookings_path = format!(
-            "{}/bookings.json",
-            env::var("BOOKINGS_DIR").map_err(|e| format!("Error getting bookings dir: {}", e))?
-        );
-        info!("Saving bookings to: {}", bookings_path);
-
-        let bookings_content = serde_json::to_string_pretty(&self.bookings).unwrap();
-        std::fs::write(bookings_path, bookings_content).unwrap();
+        self.db
+            .update(|bookings| bookings.remove(&id))
+            .await
+            .map_err(|e| format!("Error deleting booking: {}", e))?;
 
         Ok(())
     }
 
     pub fn assert_id(&self, id: &u32, user: &User) -> bool {
-        if let Some(booking) = self.bookings.get(id) {
-            return booking.user == *user;
-        }
-        false
+        self.db.read(|bookings| {
+            if let Some(booking) = bookings.get(id) {
+                return booking.user == *user;
+            }
+            false
+        })
     }
 
-    fn add_booking(&mut self, id: &u32, booking: Booking) -> Result<(), String> {
-        // if self.bookings.contains(&booking) {
-        //     return Err("Booking already exists".to_string());
-        // }
+    async fn add_booking(&mut self, id: &u32, booking: Booking) -> Result<(), String> {
         debug!("Adding booking: {:?}", booking);
-        self.bookings.insert(*id, booking);
-
-        // //build bookings json
-        // self.cached_resource_json = Some(self.get_event_json().unwrap());
-
-        //save to file
-        let bookings_path = format!(
-            "{}/bookings.json",
-            env::var("BOOKINGS_DIR").map_err(|e| format!("Error getting bookings dir: {}", e))?
-        );
-        info!("Saving bookings to: {}", bookings_path);
-
-        let bookings_content = serde_json::to_string_pretty(&self.bookings).unwrap();
-        std::fs::write(bookings_path, bookings_content).unwrap();
-
+        self.db
+            .update(|bookings| {
+                bookings.insert(*id, booking);
+            })
+            .await
+            .map_err(|e| format!("Error adding booking: {}", e))?;
         Ok(())
     }
 
-    fn delete_booking(&mut self, id: &u32) -> Result<(), String> {
-        if !self.bookings.contains_key(id) {
+    async fn delete_booking(&mut self, id: &u32) -> Result<(), String> {
+        if !self.db.read(|bookings| bookings.contains_key(id)) {
             return Err("Booking does not exist".to_string());
         }
 
-        self.bookings.remove(id);
-
-        // //build bookings json
-        // self.cached_resource_json = Some(self.get_event_json().unwrap());
-
-        //save to file
-        let bookings_path = format!(
-            "{}/bookings.json",
-            env::var("BOOKINGS_DIR").map_err(|e| format!("Error getting bookings dir: {}", e))?
-        );
-        info!("Saving bookings to: {}", bookings_path);
-
-        let bookings_content = serde_json::to_string_pretty(&self.bookings).unwrap();
-        std::fs::write(bookings_path, bookings_content).unwrap();
-
-        Ok(())
+        self.db
+            .update(|bookings| {
+                bookings.remove(id);
+            })
+            .await
+            .map_err(|e| format!("Error deleting booking: {}", e))
     }
 
-    pub fn handle_change_booking(&mut self, change_booking: ChangeBooking) -> Result<(), String> {
+    pub async fn handle_change_booking(
+        &mut self,
+        change_booking: ChangeBooking,
+    ) -> Result<(), String> {
         let id = change_booking.id;
 
         //check that booking exists
         debug!("Checking if booking exists");
-        let mut booking = self
-            .bookings
-            .get(&id)
-            .ok_or("Booking does not exist".to_string())?
-            .clone();
+        let mut booking = self.db.read(|bookings| {
+            bookings
+                .get(&id)
+                .cloned()
+                .ok_or("Booking does not exist".to_string())
+        })?;
 
         booking.start_time = change_booking.start_time;
         booking.end_time = change_booking.end_time;
@@ -571,6 +519,6 @@ impl BookingApp {
 
         //update booking
         debug!("Updating booking");
-        self.add_booking(&id, booking)
+        self.add_booking(&id, booking).await
     }
 }
