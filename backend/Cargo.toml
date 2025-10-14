@@ -12,13 +12,13 @@ description = "Backend web server for pop-book a booking system for the POP dorm
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-axum = {version = "0.7.4", features = ["macros","json"]}
+axum = {version = "0.7.9", features = ["macros","json"]}
 axum-extra = {version = "0.9", features = ["cookie"]}
-tokio = { version = "1.35.1" , features = ["macros","rt-multi-thread"] }
+tokio = { version = "1.48.0" , features = ["macros","rt-multi-thread"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-tower-http = { version = "0.6.1", features = ["cors", "fs", "catch-panic", "compression-gzip", "timeout"] }
-tower = "0.5.1"
+tower-http = { version = "0.6.6", features = ["cors", "fs", "catch-panic", "compression-gzip", "timeout"] }
+tower = "0.5.2"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 dotenvy = "0.15"
@@ -30,7 +30,7 @@ sha1 = "0.10"
 anyhow = { version = "1.0", features = ["backtrace"] }
 base64 = "0.22"
 http-body-util = "0.1"
-aide = {version = "0.13.0", features = ["axum","axum-extra-cookie","redoc"]}
+aide = {version = "0.13.5", features = ["axum","axum-extra-cookie","redoc"]}
 schemars = { version = "0.8", features = ["chrono"] }
 tempfile = "3.23.0"
 parking_lot = "0.12.5"
