@@ -17,12 +17,20 @@
   <title>POP Booking</title>
 </head>
 
-<body>
+  <body>
+  <canvas id="snow-canvas" aria-hidden="true"></canvas>
   <div class="topnav">
-    <p id="calendar" class="active" onclick="switchPages('calendar')">Calendar</p>
+    <div class="nav-left">
+      <p id="calendar" class="active" onclick="switchPages('calendar')">Calendar</p>
+      <!-- <p id="notices" onclick="switchPages('notices')">Notices</p> -->
+    </div>
     <p id="name-plate" class="middle"></p>
-    <!-- <p id="notices" onclick="switchPages('notices')">Notices</p> -->
-    <p class="split" id="login" onclick="showLoginForm()">Login</p>
+    <div class="nav-right">
+      <label for="theme-selector" class="theme-select-label">Theme</label>
+      <select id="theme-selector" class="theme-select" aria-label="Select theme">
+      </select>
+      <p class="split" id="login" onclick="showLoginForm()">Login</p>
+    </div>
   </div>
 
   <div class="container" id="notices-div" hidden>

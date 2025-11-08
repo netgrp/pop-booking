@@ -21,7 +21,607 @@ const Toast = Swal.mixin({
   }
 });
 
+const THEME_KEY = "pop-booking-theme";
+const THEMES = {
+  DEFAULT: { label: "Default" },
+  CHRISTMAS: { label: "Christmas" },
+};
+const DEFAULT_THEME = "DEFAULT";
+const THEME_CLASS_PREFIX = "theme-";
+let activeTheme = DEFAULT_THEME;
+
+const SnowEffect = (() => {
+  const TARGET_FPS = 60;
+  const FIXED_TIMESTEP = 1000 / TARGET_FPS;
+  const MAX_STEPS_PER_FRAME = 4;
+  const MAX_RENDER_FPS = 60;
+  const MIN_RENDER_INTERVAL = 1000 / MAX_RENDER_FPS;
+  const MAX_ACTIVE_PARTICLES = 320;
+  const MAX_SETTLED_PARTICLES = Infinity;
+  const GRID_COLS = 32;
+  const GRID_ROWS = 22;
+  const RELAXATION_STEPS = 1;
+  const GRAVITY = 0.0035;
+  const TERMINAL_VELOCITY = 1.9;
+  const FREEZE_THRESHOLD_FRAMES = 600;
+  const FREEZE_THRESHOLD_MS = FREEZE_THRESHOLD_FRAMES * FIXED_TIMESTEP;
+  const STILLNESS_EPSILON = 0.01;
+  const pointerWind = { current: 0, target: 0 };
+  let canvas = null;
+  let ctx = null;
+  let width = window.innerWidth;
+  let height = window.innerHeight;
+  let particles = [];
+  let settledParticles = [];
+  let frozenParticles = [];
+  let particleOrder = [];
+  let particleOrderReverse = [];
+  let animationFrame = null;
+  let isActive = false;
+  let listenersBound = false;
+  let snowColor = "rgba(255,255,255,0.95)";
+  let snowShadowColor = "rgba(15,23,42,0.2)";
+  let snowShadowBlur = 5;
+  let pileColor = "rgba(235,245,255,0.92)";
+  let gridCellWidth = width / GRID_COLS;
+  let gridCellHeight = height / GRID_ROWS;
+  let spatialGrid = [];
+  let accumulator = 0;
+  let lastFrameTime = 0;
+  let fpsOverlayEl = null;
+  let fpsVisible = false;
+  let fpsDisplayValue = TARGET_FPS;
+  let lastRenderTimestamp = 0;
+
+  function ensureCanvas() {
+    if (canvas) return true;
+    canvas = document.getElementById("snow-canvas");
+    if (!canvas) return false;
+    ctx = canvas.getContext("2d");
+    bindListeners();
+    resizeCanvas();
+    return true;
+  }
+
+  function bindListeners() {
+    if (listenersBound) return;
+    window.addEventListener("resize", resizeCanvas);
+    window.addEventListener("pointermove", handlePointerMove);
+    listenersBound = true;
+  }
+
+  function initSpatialGrid() {
+    spatialGrid = new Array(GRID_ROWS).fill(null).map(() =>
+      new Array(GRID_COLS).fill(null).map(() => [])
+    );
+  }
+
+  function resetSpatialGrid() {
+    for (let row = 0; row < GRID_ROWS; row += 1) {
+      for (let col = 0; col < GRID_COLS; col += 1) {
+        spatialGrid[row][col].length = 0;
+      }
+    }
+  }
+
+  function addParticleToGrid(index, type) {
+    const source =
+      type === "settled"
+        ? settledParticles
+        : type === "frozen"
+          ? frozenParticles
+          : particles;
+    const particle = source[index];
+    if (!particle) return;
+    const col = Math.max(
+      0,
+      Math.min(GRID_COLS - 1, Math.floor(particle.x / gridCellWidth || 0))
+    );
+    const row = Math.max(
+      0,
+      Math.min(GRID_ROWS - 1, Math.floor(particle.y / gridCellHeight || 0))
+    );
+    spatialGrid[row][col].push({ type, index });
+  }
+
+  function resizeCanvas() {
+    if (!canvas) return;
+    width = window.innerWidth;
+    height = window.innerHeight;
+    gridCellWidth = Math.max(8, width / GRID_COLS);
+    gridCellHeight = Math.max(8, height / GRID_ROWS);
+    canvas.width = width;
+    canvas.height = height;
+    initSpatialGrid();
+    settledParticles = [];
+    frozenParticles = [];
+    accumulator = 0;
+    lastFrameTime = 0;
+    lastRenderTimestamp = 0;
+    if (isActive && particles.length) {
+      particles.forEach((particle) => {
+        particle.x = Math.random() * width;
+        particle.y = Math.random() * height;
+      });
+    }
+  }
+
+  function handlePointerMove(event) {
+    if (!width) return;
+    const ratio = (event.clientX / width) * 2 - 1;
+    pointerWind.target = ratio * 0.8;
+  }
+
+  function createParticle(initialY = null) {
+    const radius = Math.random() * 2 + 1.2;
+    return {
+      x: Math.random() * width,
+      y: initialY === null ? Math.random() * height : initialY,
+      radius,
+      vx: 0,
+      vy: Math.random() * 0.7 + 0.25,
+      sway: Math.random() * 0.65 + 0.3,
+      angle: Math.random() * Math.PI * 2,
+      angleSpeed: Math.random() * 0.03 + 0.007,
+    };
+  }
+
+  function recycleParticle(target, initialY = null, keepMomentum = false) {
+    const next = createParticle(initialY);
+    if (keepMomentum) {
+      next.angle = target.angle;
+      next.angleSpeed = target.angleSpeed;
+    }
+    Object.assign(target, next);
+  }
+
+  function populateParticles() {
+    particles = [];
+    for (let i = 0; i < MAX_ACTIVE_PARTICLES; i += 1) {
+      particles.push(createParticle());
+    }
+    particleOrder = particles.map((_, index) => index);
+    particleOrderReverse = [...particleOrder].reverse();
+  }
+
+  function clamp(value, min, max) {
+    return Math.min(Math.max(value, min), max);
+  }
+
+  function wrapParticle(particle) {
+    if (particle.x > width + 5) {
+      particle.x = -5;
+    } else if (particle.x < -5) {
+      particle.x = width + 5;
+    }
+  }
+
+  function rebuildSpatialGrid(includeActive = true) {
+    if (!spatialGrid.length) return;
+    resetSpatialGrid();
+    for (let i = 0; i < settledParticles.length; i += 1) {
+      addParticleToGrid(i, "settled");
+    }
+    for (let i = 0; i < frozenParticles.length; i += 1) {
+      addParticleToGrid(i, "frozen");
+    }
+    if (!includeActive) return;
+    for (let i = 0; i < particles.length; i += 1) {
+      addParticleToGrid(i, "active");
+    }
+  }
+
+  function getNeighborEntries(particle) {
+    if (!gridCellWidth || !gridCellHeight || !spatialGrid.length) return [];
+    const reachX = particle.radius * 2.5;
+    const reachY = particle.radius * 2.5;
+    const minCol = Math.max(0, Math.floor((particle.x - reachX) / gridCellWidth));
+    const maxCol = Math.min(GRID_COLS - 1, Math.floor((particle.x + reachX) / gridCellWidth));
+    const minRow = Math.max(0, Math.floor((particle.y - reachY) / gridCellHeight));
+    const maxRow = Math.min(GRID_ROWS - 1, Math.floor((particle.y + reachY) / gridCellHeight));
+    const neighbors = [];
+    for (let row = minRow; row <= maxRow; row += 1) {
+      for (let col = minCol; col <= maxCol; col += 1) {
+        const cell = spatialGrid[row][col];
+        for (let i = 0; i < cell.length; i += 1) {
+          neighbors.push(cell[i]);
+        }
+      }
+    }
+    return neighbors;
+  }
+
+  function settleParticle(particle) {
+    const clampedX = clamp(
+      particle.x,
+      particle.radius,
+      Math.max(particle.radius, width - particle.radius)
+    );
+    const clampedY = Math.min(height - particle.radius, particle.y);
+    settledParticles.push({
+      x: clampedX,
+      y: clampedY,
+      radius: particle.radius,
+      stillTime: 0,
+      lastX: clampedX,
+      lastY: clampedY,
+    });
+    if (Number.isFinite(MAX_SETTLED_PARTICLES) && settledParticles.length > MAX_SETTLED_PARTICLES) {
+      settledParticles.splice(0, settledParticles.length - MAX_SETTLED_PARTICLES);
+    }
+    if (spatialGrid.length) {
+      addParticleToGrid(settledParticles.length - 1, "settled");
+    }
+    recycleParticle(particle, -40, true);
+  }
+
+  function resolveParticleCollisions(index) {
+    const particle = particles[index];
+    if (!particle) return false;
+    let supportContacts = 0;
+    const neighbors = getNeighborEntries(particle);
+
+    for (let i = 0; i < neighbors.length; i += 1) {
+      const entry = neighbors[i];
+      if (entry.type === "active" && entry.index === index) continue;
+      const otherSource = entry.type === "active" ? particles : settledParticles;
+      const neighbor = otherSource[entry.index];
+      if (!neighbor) continue;
+
+      const dx = particle.x - neighbor.x;
+      const dy = particle.y - neighbor.y;
+      const distance = Math.sqrt(dx * dx + dy * dy) || 0.0001;
+      const minDist = particle.radius + neighbor.radius + 0.25;
+      if (distance >= minDist) continue;
+
+      const nx = dx / distance;
+      const ny = dy / distance;
+      const overlap = minDist - distance;
+      const compression = overlap * 0.65 + 0.02;
+
+      particle.x += nx * compression;
+      particle.y += ny * compression;
+      particle.vx += nx * compression * 0.04;
+      particle.vy += ny * compression * 0.04;
+
+      if (entry.type === "active") {
+        neighbor.x -= nx * compression;
+        neighbor.y -= ny * compression;
+        neighbor.vx -= nx * compression * 0.04;
+        neighbor.vy -= ny * compression * 0.04;
+      }
+
+      if (ny > 0.35) {
+        supportContacts += 1;
+      }
+    }
+
+    if (particle.y + particle.radius >= height - 1) {
+      particle.y = height - particle.radius;
+      supportContacts += 2;
+    }
+
+    wrapParticle(particle);
+
+    if (supportContacts >= 2) {
+      settleParticle(particle);
+      return true;
+    }
+
+    return false;
+  }
+
+  function updateActiveParticles(wind, deltaRatio) {
+    for (let i = 0; i < particles.length; i += 1) {
+      const particle = particles[i];
+      particle.angle += particle.angleSpeed * deltaRatio;
+      const sway = Math.sin(particle.angle) * particle.sway;
+      particle.vx += (sway + wind - particle.vx) * 0.08 * deltaRatio;
+      particle.vy = Math.min(
+        particle.vy + GRAVITY * (1 + particle.radius * 0.35) * deltaRatio,
+        TERMINAL_VELOCITY * 1.35
+      );
+      particle.x += particle.vx * deltaRatio;
+      particle.y += particle.vy * 1.8 * deltaRatio;
+      wrapParticle(particle);
+    }
+  }
+
+  function runCollisionRelaxation() {
+    if (!particles.length || !particleOrder.length) return;
+    rebuildSpatialGrid(true);
+    for (let step = 0; step < RELAXATION_STEPS; step += 1) {
+      const order = step % 2 === 0 ? particleOrder : particleOrderReverse;
+      for (let i = 0; i < order.length; i += 1) {
+        resolveParticleCollisions(order[i]);
+      }
+      if (step < RELAXATION_STEPS - 1) {
+        rebuildSpatialGrid(true);
+      }
+    }
+  }
+
+  function freezeCalmSettledParticles(deltaMs) {
+    if (!settledParticles.length) return;
+    for (let i = settledParticles.length - 1; i >= 0; i -= 1) {
+      const particle = settledParticles[i];
+      const dx = particle.x - particle.lastX;
+      const dy = particle.y - particle.lastY;
+      const moved = Math.abs(dx) + Math.abs(dy) > STILLNESS_EPSILON;
+      if (moved) {
+        particle.lastX = particle.x;
+        particle.lastY = particle.y;
+        particle.stillTime = 0;
+        continue;
+      }
+      particle.stillTime += deltaMs;
+      if (particle.stillTime >= FREEZE_THRESHOLD_MS) {
+        frozenParticles.push({
+          x: particle.x,
+          y: particle.y,
+          radius: particle.radius,
+        });
+        settledParticles.splice(i, 1);
+      }
+    }
+  }
+
+  function drawSettledParticles() {
+    if (!ctx) return;
+    ctx.save();
+    ctx.fillStyle = pileColor;
+    ctx.shadowColor = snowShadowColor;
+    ctx.shadowBlur = Math.max(2, snowShadowBlur * 0.5);
+    const renderParticle = (particle) => {
+      ctx.beginPath();
+      ctx.arc(particle.x, particle.y, particle.radius, 0, Math.PI * 2);
+      ctx.fill();
+    };
+    for (let i = 0; i < frozenParticles.length; i += 1) {
+      renderParticle(frozenParticles[i]);
+    }
+    for (let i = 0; i < settledParticles.length; i += 1) {
+      renderParticle(settledParticles[i]);
+    }
+    ctx.restore();
+  }
+
+  function drawActiveParticles() {
+    if (!ctx) return;
+    for (let i = 0; i < particles.length; i += 1) {
+      const particle = particles[i];
+      ctx.beginPath();
+      ctx.arc(particle.x, particle.y, particle.radius, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  function stepSimulation(deltaMs) {
+    const deltaRatio = deltaMs / FIXED_TIMESTEP;
+    pointerWind.current += (pointerWind.target - pointerWind.current) * 0.02 * deltaRatio;
+    const wind = pointerWind.current * 2.2;
+    updateActiveParticles(wind, deltaRatio);
+    runCollisionRelaxation();
+    freezeCalmSettledParticles(deltaMs);
+  }
+
+  function renderScene() {
+    if (!ctx) return;
+    ctx.clearRect(0, 0, width, height);
+    drawSettledParticles();
+    ctx.fillStyle = snowColor;
+    ctx.shadowColor = snowShadowColor;
+    ctx.shadowBlur = snowShadowBlur;
+    drawActiveParticles();
+  }
+
+  function getActiveParticleCount() {
+    return particles.length + settledParticles.length;
+  }
+
+  function getInactiveParticleCount() {
+    return frozenParticles.length;
+  }
+
+  function ensureFpsOverlay() {
+    if (fpsOverlayEl) return;
+    fpsOverlayEl = document.createElement("div");
+    fpsOverlayEl.id = "fps-overlay";
+    fpsOverlayEl.style.display = "none";
+    fpsOverlayEl.textContent = `${TARGET_FPS.toFixed(1)} fps | active ${getActiveParticleCount()} | inactive ${getInactiveParticleCount()}`;
+    document.body.appendChild(fpsOverlayEl);
+  }
+
+  function toggleFpsOverlay() {
+    ensureFpsOverlay();
+    fpsVisible = !fpsVisible;
+    fpsOverlayEl.style.display = fpsVisible ? "block" : "none";
+  }
+
+  function updateFpsOverlay(deltaMs) {
+    if (!fpsVisible || !fpsOverlayEl) return;
+    const instantaneous = deltaMs > 0 ? 1000 / deltaMs : TARGET_FPS;
+    fpsDisplayValue = fpsDisplayValue * 0.9 + instantaneous * 0.1;
+    fpsOverlayEl.textContent = `${fpsDisplayValue.toFixed(1)} fps | active ${getActiveParticleCount()} | inactive ${getInactiveParticleCount()}`;
+  }
+
+  function draw(timestamp = performance.now()) {
+    if (!ctx || !isActive) return;
+    if (!lastFrameTime) lastFrameTime = timestamp;
+    const delta = Math.min(1000, timestamp - lastFrameTime);
+    lastFrameTime = timestamp;
+    accumulator += delta;
+    let steps = 0;
+    while (accumulator >= FIXED_TIMESTEP && steps < MAX_STEPS_PER_FRAME) {
+      stepSimulation(FIXED_TIMESTEP);
+      accumulator -= FIXED_TIMESTEP;
+      steps += 1;
+    }
+    if (steps === MAX_STEPS_PER_FRAME && accumulator > FIXED_TIMESTEP) {
+      accumulator = FIXED_TIMESTEP;
+    }
+    const shouldRender =
+      !lastRenderTimestamp || (timestamp - lastRenderTimestamp) >= MIN_RENDER_INTERVAL;
+    if (shouldRender) {
+      renderScene();
+      updateFpsOverlay(delta);
+      lastRenderTimestamp = timestamp;
+    }
+    animationFrame = window.requestAnimationFrame(draw);
+  }
+
+  function start() {
+    if (isActive) return;
+    if (!ensureCanvas()) return;
+    isActive = true;
+    document.body.classList.add("snow-active");
+    populateParticles();
+    settledParticles = [];
+    frozenParticles = [];
+    pointerWind.current = 0;
+    pointerWind.target = 0;
+    accumulator = 0;
+    lastFrameTime = 0;
+    lastRenderTimestamp = 0;
+    fpsDisplayValue = TARGET_FPS;
+    ctx.clearRect(0, 0, width, height);
+    animationFrame = window.requestAnimationFrame(draw);
+  }
+
+  function stop() {
+    if (!isActive) return;
+    isActive = false;
+    document.body.classList.remove("snow-active");
+    pointerWind.target = 0;
+    if (animationFrame) {
+      window.cancelAnimationFrame(animationFrame);
+      animationFrame = null;
+    }
+    if (ctx) {
+      ctx.clearRect(0, 0, width, height);
+      ctx.shadowBlur = 0;
+      ctx.shadowColor = "transparent";
+    }
+    settledParticles = [];
+    frozenParticles = [];
+    particles = [];
+    particleOrder = [];
+    particleOrderReverse = [];
+    accumulator = 0;
+    lastFrameTime = 0;
+    lastRenderTimestamp = 0;
+  }
+
+  function configure(options = {}) {
+    snowColor = options.color || snowColor;
+    snowShadowColor = options.shadowColor || snowShadowColor;
+    snowShadowBlur = typeof options.shadowBlur === "number" ? options.shadowBlur : snowShadowBlur;
+    pileColor = options.pileColor || pileColor;
+  }
+
+  return {
+    start,
+    stop,
+    configure,
+    toggleFpsOverlay,
+  };
+})();
+
+function getThemeClassName(theme) {
+  return `${THEME_CLASS_PREFIX}${theme.toLowerCase()}`;
+}
+
+function applyTheme(themeName) {
+  const root = document.documentElement;
+  Object.keys(THEMES).forEach((theme) => {
+    root.classList.remove(getThemeClassName(theme));
+  });
+  root.classList.add(getThemeClassName(themeName));
+  activeTheme = themeName;
+}
+
+function persistTheme(themeName) {
+  try {
+    localStorage.setItem(THEME_KEY, themeName);
+  } catch (error) {
+    console.warn("Unable to persist theme preference", error);
+  }
+}
+
+function updateThemeSelector(themeName) {
+  const selector = document.getElementById("theme-selector");
+  if (selector && selector.value !== themeName) {
+    selector.value = themeName;
+  }
+}
+
+function setTheme(themeName) {
+  const nextTheme = THEMES[themeName] ? themeName : DEFAULT_THEME;
+  applyTheme(nextTheme);
+  persistTheme(nextTheme);
+  updateThemeSelector(nextTheme);
+  syncThemeEffects(nextTheme);
+}
+
+function syncThemeEffects(themeName) {
+  if (themeName === "CHRISTMAS") {
+    SnowEffect.configure({
+      color: "rgba(233, 249, 255, 0.97)",
+      shadowColor: "rgba(56, 189, 248, 0.55)",
+      shadowBlur: 8,
+      pileColor: "rgba(216, 241, 255, 0.95)",
+    });
+    SnowEffect.start();
+  } else {
+    SnowEffect.configure({
+      color: "rgba(255, 255, 255, 0.9)",
+      shadowColor: "rgba(15, 23, 42, 0.15)",
+      shadowBlur: 4,
+      pileColor: "rgba(235,245,255,0.92)",
+    });
+    SnowEffect.stop();
+  }
+}
+
+function hydrateThemeSelectorOptions(selector) {
+  selector.innerHTML = "";
+  Object.entries(THEMES).forEach(([value, config]) => {
+    const option = document.createElement("option");
+    option.value = value;
+    option.textContent = config.label;
+    selector.appendChild(option);
+  });
+}
+
+function initThemeSelector() {
+  const selector = document.getElementById("theme-selector");
+  if (!selector) return;
+  hydrateThemeSelectorOptions(selector);
+  selector.addEventListener("change", (event) => setTheme(event.target.value));
+  updateThemeSelector(activeTheme);
+}
+
+(function bootstrapTheme() {
+  let storedTheme = null;
+  try {
+    storedTheme = localStorage.getItem(THEME_KEY);
+  } catch (_) {
+    // Access to localStorage can fail in private browsing
+  }
+  const initialTheme = THEMES[storedTheme] ? storedTheme : DEFAULT_THEME;
+  applyTheme(initialTheme);
+})();
+
+document.addEventListener("DOMContentLoaded", function () {
+  initThemeSelector();
+  syncThemeEffects(activeTheme);
+});
+
 document.addEventListener('keydown', function (event) {
+  if (event.key === 'h' || event.key === 'H') {
+    SnowEffect.toggleFpsOverlay();
+    return;
+  }
   if (event.key === 'Escape') {
     Swal.clickCancel();
   }
