@@ -30,54 +30,30 @@ const DEFAULT_THEME = "DEFAULT";
 const THEME_CLASS_PREFIX = "theme-";
 let activeTheme = DEFAULT_THEME;
 
+
+
 const SnowEffect = (() => {
   const TARGET_FPS = 60;
-  const FIXED_TIMESTEP = 1000 / TARGET_FPS;
-  const MAX_STEPS_PER_FRAME = 4;
-  const MAX_RENDER_FPS = 60;
-  const MIN_RENDER_INTERVAL = 1000 / MAX_RENDER_FPS;
-  const MAX_ACTIVE_PARTICLES = 320;
-  const MAX_SETTLED_PARTICLES = Infinity;
-  const GRID_COLS = 32;
-  const GRID_ROWS = 22;
-  const RELAXATION_STEPS = 1;
-  const GRAVITY = 0.0035;
-  const TERMINAL_VELOCITY = 1.9;
-  const FREEZE_THRESHOLD_FRAMES = 600;
-  const FREEZE_THRESHOLD_MS = FREEZE_THRESHOLD_FRAMES * FIXED_TIMESTEP;
-  const STILLNESS_EPSILON = 0.01;
-  const pointerWind = { current: 0, target: 0 };
   let canvas = null;
-  let ctx = null;
   let width = window.innerWidth;
   let height = window.innerHeight;
-  let particles = [];
-  let settledParticles = [];
-  let frozenParticles = [];
-  let particleOrder = [];
-  let particleOrderReverse = [];
   let animationFrame = null;
   let isActive = false;
   let listenersBound = false;
-  let snowColor = "rgba(255,255,255,0.95)";
-  let snowShadowColor = "rgba(15,23,42,0.2)";
-  let snowShadowBlur = 5;
-  let pileColor = "rgba(235,245,255,0.92)";
-  let gridCellWidth = width / GRID_COLS;
-  let gridCellHeight = height / GRID_ROWS;
-  let spatialGrid = [];
-  let accumulator = 0;
+  let snowTintColor = "rgba(255,255,255,0.95)";
+  let pointerWindTarget = 0;
+  let wasmReadyPromise = null;
+  let wasmExports = null;
+  let pendingResize = null;
   let lastFrameTime = 0;
   let fpsOverlayEl = null;
   let fpsVisible = false;
   let fpsDisplayValue = TARGET_FPS;
-  let lastRenderTimestamp = 0;
 
   function ensureCanvas() {
     if (canvas) return true;
     canvas = document.getElementById("snow-canvas");
     if (!canvas) return false;
-    ctx = canvas.getContext("2d");
     bindListeners();
     resizeCanvas();
     return true;
@@ -90,337 +66,65 @@ const SnowEffect = (() => {
     listenersBound = true;
   }
 
-  function initSpatialGrid() {
-    spatialGrid = new Array(GRID_ROWS).fill(null).map(() =>
-      new Array(GRID_COLS).fill(null).map(() => [])
-    );
-  }
-
-  function resetSpatialGrid() {
-    for (let row = 0; row < GRID_ROWS; row += 1) {
-      for (let col = 0; col < GRID_COLS; col += 1) {
-        spatialGrid[row][col].length = 0;
-      }
-    }
-  }
-
-  function addParticleToGrid(index, type) {
-    const source =
-      type === "settled"
-        ? settledParticles
-        : type === "frozen"
-          ? frozenParticles
-          : particles;
-    const particle = source[index];
-    if (!particle) return;
-    const col = Math.max(
-      0,
-      Math.min(GRID_COLS - 1, Math.floor(particle.x / gridCellWidth || 0))
-    );
-    const row = Math.max(
-      0,
-      Math.min(GRID_ROWS - 1, Math.floor(particle.y / gridCellHeight || 0))
-    );
-    spatialGrid[row][col].push({ type, index });
-  }
-
   function resizeCanvas() {
     if (!canvas) return;
     width = window.innerWidth;
     height = window.innerHeight;
-    gridCellWidth = Math.max(8, width / GRID_COLS);
-    gridCellHeight = Math.max(8, height / GRID_ROWS);
     canvas.width = width;
     canvas.height = height;
-    initSpatialGrid();
-    settledParticles = [];
-    frozenParticles = [];
-    accumulator = 0;
-    lastFrameTime = 0;
-    lastRenderTimestamp = 0;
-    if (isActive && particles.length) {
-      particles.forEach((particle) => {
-        particle.x = Math.random() * width;
-        particle.y = Math.random() * height;
-      });
+    if (wasmExports && typeof wasmExports.snow_resize === "function") {
+      try {
+        wasmExports.snow_resize(width, height);
+      } catch (error) {
+        console.warn("Snow resize failed", error);
+      }
+    } else {
+      pendingResize = { width, height };
     }
   }
 
   function handlePointerMove(event) {
     if (!width) return;
     const ratio = (event.clientX / width) * 2 - 1;
-    pointerWind.target = ratio * 0.8;
+    setPointerWind(ratio * 0.8);
   }
 
-  function createParticle(initialY = null) {
-    const radius = Math.random() * 2 + 1.2;
-    return {
-      x: Math.random() * width,
-      y: initialY === null ? Math.random() * height : initialY,
-      radius,
-      vx: 0,
-      vy: Math.random() * 0.7 + 0.25,
-      sway: Math.random() * 0.65 + 0.3,
-      angle: Math.random() * Math.PI * 2,
-      angleSpeed: Math.random() * 0.03 + 0.007,
-    };
-  }
-
-  function recycleParticle(target, initialY = null, keepMomentum = false) {
-    const next = createParticle(initialY);
-    if (keepMomentum) {
-      next.angle = target.angle;
-      next.angleSpeed = target.angleSpeed;
-    }
-    Object.assign(target, next);
-  }
-
-  function populateParticles() {
-    particles = [];
-    for (let i = 0; i < MAX_ACTIVE_PARTICLES; i += 1) {
-      particles.push(createParticle());
-    }
-    particleOrder = particles.map((_, index) => index);
-    particleOrderReverse = [...particleOrder].reverse();
-  }
-
-  function clamp(value, min, max) {
-    return Math.min(Math.max(value, min), max);
-  }
-
-  function wrapParticle(particle) {
-    if (particle.x > width + 5) {
-      particle.x = -5;
-    } else if (particle.x < -5) {
-      particle.x = width + 5;
+  function setPointerWind(target) {
+    pointerWindTarget = target;
+    if (wasmExports && typeof wasmExports.snow_pointer_wind === "function") {
+      wasmExports.snow_pointer_wind(pointerWindTarget);
     }
   }
 
-  function rebuildSpatialGrid(includeActive = true) {
-    if (!spatialGrid.length) return;
-    resetSpatialGrid();
-    for (let i = 0; i < settledParticles.length; i += 1) {
-      addParticleToGrid(i, "settled");
-    }
-    for (let i = 0; i < frozenParticles.length; i += 1) {
-      addParticleToGrid(i, "frozen");
-    }
-    if (!includeActive) return;
-    for (let i = 0; i < particles.length; i += 1) {
-      addParticleToGrid(i, "active");
-    }
-  }
-
-  function getNeighborEntries(particle) {
-    if (!gridCellWidth || !gridCellHeight || !spatialGrid.length) return [];
-    const reachX = particle.radius * 2.5;
-    const reachY = particle.radius * 2.5;
-    const minCol = Math.max(0, Math.floor((particle.x - reachX) / gridCellWidth));
-    const maxCol = Math.min(GRID_COLS - 1, Math.floor((particle.x + reachX) / gridCellWidth));
-    const minRow = Math.max(0, Math.floor((particle.y - reachY) / gridCellHeight));
-    const maxRow = Math.min(GRID_ROWS - 1, Math.floor((particle.y + reachY) / gridCellHeight));
-    const neighbors = [];
-    for (let row = minRow; row <= maxRow; row += 1) {
-      for (let col = minCol; col <= maxCol; col += 1) {
-        const cell = spatialGrid[row][col];
-        for (let i = 0; i < cell.length; i += 1) {
-          neighbors.push(cell[i]);
-        }
+  async function loadWasmModule() {
+    if (wasmReadyPromise) return wasmReadyPromise;
+    wasmReadyPromise = (async () => {
+      if (!window.WebAssembly) {
+        throw new Error("WebAssembly is not supported in this browser.");
       }
-    }
-    return neighbors;
-  }
-
-  function settleParticle(particle) {
-    const clampedX = clamp(
-      particle.x,
-      particle.radius,
-      Math.max(particle.radius, width - particle.radius)
-    );
-    const clampedY = Math.min(height - particle.radius, particle.y);
-    settledParticles.push({
-      x: clampedX,
-      y: clampedY,
-      radius: particle.radius,
-      stillTime: 0,
-      lastX: clampedX,
-      lastY: clampedY,
+      const module = await import("./snow-wasm/pkg/snow_sim.js");
+      if (!module || typeof module.default !== "function") {
+        throw new Error("Invalid snow wasm bundle");
+      }
+      await module.default();
+      wasmExports = module;
+      if (typeof wasmExports.snow_init !== "function") {
+        throw new Error("Snow wasm exports are missing expected functions.");
+      }
+      wasmExports.snow_init(width, height);
+      if (pendingResize) {
+        wasmExports.snow_resize(pendingResize.width, pendingResize.height);
+        pendingResize = null;
+      }
+      setPointerWind(pointerWindTarget);
+      applySnowTint();
+      return wasmExports;
+    })().catch((error) => {
+      console.error("Failed to initialize snow wasm", error);
+      wasmReadyPromise = null;
+      throw error;
     });
-    if (Number.isFinite(MAX_SETTLED_PARTICLES) && settledParticles.length > MAX_SETTLED_PARTICLES) {
-      settledParticles.splice(0, settledParticles.length - MAX_SETTLED_PARTICLES);
-    }
-    if (spatialGrid.length) {
-      addParticleToGrid(settledParticles.length - 1, "settled");
-    }
-    recycleParticle(particle, -40, true);
-  }
-
-  function resolveParticleCollisions(index) {
-    const particle = particles[index];
-    if (!particle) return false;
-    let supportContacts = 0;
-    const neighbors = getNeighborEntries(particle);
-
-    for (let i = 0; i < neighbors.length; i += 1) {
-      const entry = neighbors[i];
-      if (entry.type === "active" && entry.index === index) continue;
-      const otherSource = entry.type === "active" ? particles : settledParticles;
-      const neighbor = otherSource[entry.index];
-      if (!neighbor) continue;
-
-      const dx = particle.x - neighbor.x;
-      const dy = particle.y - neighbor.y;
-      const distance = Math.sqrt(dx * dx + dy * dy) || 0.0001;
-      const minDist = particle.radius + neighbor.radius + 0.25;
-      if (distance >= minDist) continue;
-
-      const nx = dx / distance;
-      const ny = dy / distance;
-      const overlap = minDist - distance;
-      const compression = overlap * 0.65 + 0.02;
-
-      particle.x += nx * compression;
-      particle.y += ny * compression;
-      particle.vx += nx * compression * 0.04;
-      particle.vy += ny * compression * 0.04;
-
-      if (entry.type === "active") {
-        neighbor.x -= nx * compression;
-        neighbor.y -= ny * compression;
-        neighbor.vx -= nx * compression * 0.04;
-        neighbor.vy -= ny * compression * 0.04;
-      }
-
-      if (ny > 0.35) {
-        supportContacts += 1;
-      }
-    }
-
-    if (particle.y + particle.radius >= height - 1) {
-      particle.y = height - particle.radius;
-      supportContacts += 2;
-    }
-
-    wrapParticle(particle);
-
-    if (supportContacts >= 2) {
-      settleParticle(particle);
-      return true;
-    }
-
-    return false;
-  }
-
-  function updateActiveParticles(wind, deltaRatio) {
-    for (let i = 0; i < particles.length; i += 1) {
-      const particle = particles[i];
-      particle.angle += particle.angleSpeed * deltaRatio;
-      const sway = Math.sin(particle.angle) * particle.sway;
-      particle.vx += (sway + wind - particle.vx) * 0.08 * deltaRatio;
-      particle.vy = Math.min(
-        particle.vy + GRAVITY * (1 + particle.radius * 0.35) * deltaRatio,
-        TERMINAL_VELOCITY * 1.35
-      );
-      particle.x += particle.vx * deltaRatio;
-      particle.y += particle.vy * 1.8 * deltaRatio;
-      wrapParticle(particle);
-    }
-  }
-
-  function runCollisionRelaxation() {
-    if (!particles.length || !particleOrder.length) return;
-    rebuildSpatialGrid(true);
-    for (let step = 0; step < RELAXATION_STEPS; step += 1) {
-      const order = step % 2 === 0 ? particleOrder : particleOrderReverse;
-      for (let i = 0; i < order.length; i += 1) {
-        resolveParticleCollisions(order[i]);
-      }
-      if (step < RELAXATION_STEPS - 1) {
-        rebuildSpatialGrid(true);
-      }
-    }
-  }
-
-  function freezeCalmSettledParticles(deltaMs) {
-    if (!settledParticles.length) return;
-    for (let i = settledParticles.length - 1; i >= 0; i -= 1) {
-      const particle = settledParticles[i];
-      const dx = particle.x - particle.lastX;
-      const dy = particle.y - particle.lastY;
-      const moved = Math.abs(dx) + Math.abs(dy) > STILLNESS_EPSILON;
-      if (moved) {
-        particle.lastX = particle.x;
-        particle.lastY = particle.y;
-        particle.stillTime = 0;
-        continue;
-      }
-      particle.stillTime += deltaMs;
-      if (particle.stillTime >= FREEZE_THRESHOLD_MS) {
-        frozenParticles.push({
-          x: particle.x,
-          y: particle.y,
-          radius: particle.radius,
-        });
-        settledParticles.splice(i, 1);
-      }
-    }
-  }
-
-  function drawSettledParticles() {
-    if (!ctx) return;
-    ctx.save();
-    ctx.fillStyle = pileColor;
-    ctx.shadowColor = snowShadowColor;
-    ctx.shadowBlur = Math.max(2, snowShadowBlur * 0.5);
-    const renderParticle = (particle) => {
-      ctx.beginPath();
-      ctx.arc(particle.x, particle.y, particle.radius, 0, Math.PI * 2);
-      ctx.fill();
-    };
-    for (let i = 0; i < frozenParticles.length; i += 1) {
-      renderParticle(frozenParticles[i]);
-    }
-    for (let i = 0; i < settledParticles.length; i += 1) {
-      renderParticle(settledParticles[i]);
-    }
-    ctx.restore();
-  }
-
-  function drawActiveParticles() {
-    if (!ctx) return;
-    for (let i = 0; i < particles.length; i += 1) {
-      const particle = particles[i];
-      ctx.beginPath();
-      ctx.arc(particle.x, particle.y, particle.radius, 0, Math.PI * 2);
-      ctx.fill();
-    }
-  }
-
-  function stepSimulation(deltaMs) {
-    const deltaRatio = deltaMs / FIXED_TIMESTEP;
-    pointerWind.current += (pointerWind.target - pointerWind.current) * 0.02 * deltaRatio;
-    const wind = pointerWind.current * 2.2;
-    updateActiveParticles(wind, deltaRatio);
-    runCollisionRelaxation();
-    freezeCalmSettledParticles(deltaMs);
-  }
-
-  function renderScene() {
-    if (!ctx) return;
-    ctx.clearRect(0, 0, width, height);
-    drawSettledParticles();
-    ctx.fillStyle = snowColor;
-    ctx.shadowColor = snowShadowColor;
-    ctx.shadowBlur = snowShadowBlur;
-    drawActiveParticles();
-  }
-
-  function getActiveParticleCount() {
-    return particles.length + settledParticles.length;
-  }
-
-  function getInactiveParticleCount() {
-    return frozenParticles.length;
+    return wasmReadyPromise;
   }
 
   function ensureFpsOverlay() {
@@ -428,7 +132,7 @@ const SnowEffect = (() => {
     fpsOverlayEl = document.createElement("div");
     fpsOverlayEl.id = "fps-overlay";
     fpsOverlayEl.style.display = "none";
-    fpsOverlayEl.textContent = `${TARGET_FPS.toFixed(1)} fps | active ${getActiveParticleCount()} | inactive ${getInactiveParticleCount()}`;
+    fpsOverlayEl.textContent = `${TARGET_FPS.toFixed(1)} fps`;
     document.body.appendChild(fpsOverlayEl);
   }
 
@@ -438,34 +142,33 @@ const SnowEffect = (() => {
     fpsOverlayEl.style.display = fpsVisible ? "block" : "none";
   }
 
+  function getCounts() {
+    if (!wasmExports) return { active: 0, inactive: 0 };
+    const active = typeof wasmExports.snow_dynamic_count === "function" ? wasmExports.snow_dynamic_count() : 0;
+    const inactive = typeof wasmExports.snow_inactive_count === "function" ? wasmExports.snow_inactive_count() : 0;
+    return { active, inactive };
+  }
+
   function updateFpsOverlay(deltaMs) {
     if (!fpsVisible || !fpsOverlayEl) return;
     const instantaneous = deltaMs > 0 ? 1000 / deltaMs : TARGET_FPS;
     fpsDisplayValue = fpsDisplayValue * 0.9 + instantaneous * 0.1;
-    fpsOverlayEl.textContent = `${fpsDisplayValue.toFixed(1)} fps | active ${getActiveParticleCount()} | inactive ${getInactiveParticleCount()}`;
+    const counts = getCounts();
+    fpsOverlayEl.textContent = `${fpsDisplayValue.toFixed(1)} fps | active ${counts.active} | inactive ${counts.inactive}`;
   }
 
   function draw(timestamp = performance.now()) {
-    if (!ctx || !isActive) return;
+    if (!isActive || !wasmExports) return;
     if (!lastFrameTime) lastFrameTime = timestamp;
     const delta = Math.min(1000, timestamp - lastFrameTime);
     lastFrameTime = timestamp;
-    accumulator += delta;
-    let steps = 0;
-    while (accumulator >= FIXED_TIMESTEP && steps < MAX_STEPS_PER_FRAME) {
-      stepSimulation(FIXED_TIMESTEP);
-      accumulator -= FIXED_TIMESTEP;
-      steps += 1;
-    }
-    if (steps === MAX_STEPS_PER_FRAME && accumulator > FIXED_TIMESTEP) {
-      accumulator = FIXED_TIMESTEP;
-    }
-    const shouldRender =
-      !lastRenderTimestamp || (timestamp - lastRenderTimestamp) >= MIN_RENDER_INTERVAL;
-    if (shouldRender) {
-      renderScene();
+    try {
+      wasmExports.snow_step(delta);
       updateFpsOverlay(delta);
-      lastRenderTimestamp = timestamp;
+    } catch (error) {
+      console.error("Snow step failed", error);
+      stop();
+      return;
     }
     animationFrame = window.requestAnimationFrame(draw);
   }
@@ -475,48 +178,94 @@ const SnowEffect = (() => {
     if (!ensureCanvas()) return;
     isActive = true;
     document.body.classList.add("snow-active");
-    populateParticles();
-    settledParticles = [];
-    frozenParticles = [];
-    pointerWind.current = 0;
-    pointerWind.target = 0;
-    accumulator = 0;
     lastFrameTime = 0;
-    lastRenderTimestamp = 0;
-    fpsDisplayValue = TARGET_FPS;
-    ctx.clearRect(0, 0, width, height);
-    animationFrame = window.requestAnimationFrame(draw);
+    lastFrameTime = 0;
+    loadWasmModule()
+      .then(() => {
+        if (!isActive || !wasmExports) return;
+        if (wasmExports && typeof wasmExports.snow_reset === "function") {
+          wasmExports.snow_reset();
+        }
+        setPointerWind(pointerWindTarget);
+        animationFrame = window.requestAnimationFrame(draw);
+      })
+      .catch((error) => {
+        console.error("Unable to start snow effect", error);
+        Toast.fire({
+          icon: "error",
+          title: "Snow effect unavailable",
+        });
+        document.body.classList.remove("snow-active");
+        isActive = false;
+      });
   }
 
   function stop() {
     if (!isActive) return;
     isActive = false;
     document.body.classList.remove("snow-active");
-    pointerWind.target = 0;
     if (animationFrame) {
       window.cancelAnimationFrame(animationFrame);
       animationFrame = null;
     }
-    if (ctx) {
-      ctx.clearRect(0, 0, width, height);
-      ctx.shadowBlur = 0;
-      ctx.shadowColor = "transparent";
-    }
-    settledParticles = [];
-    frozenParticles = [];
-    particles = [];
-    particleOrder = [];
-    particleOrderReverse = [];
-    accumulator = 0;
     lastFrameTime = 0;
-    lastRenderTimestamp = 0;
+    if (wasmExports && typeof wasmExports.snow_reset === "function") {
+      try {
+        wasmExports.snow_reset();
+      } catch (error) {
+        console.warn("Snow reset failed during stop", error);
+      }
+    }
+  }
+
+  function parseColorString(input) {
+    if (!input || typeof input !== "string") return null;
+    const value = input.trim();
+    if (value.startsWith("#")) {
+      const hex = value.slice(1);
+      if (hex.length === 3) {
+        const r = parseInt(hex[0] + hex[0], 16);
+        const g = parseInt(hex[1] + hex[1], 16);
+        const b = parseInt(hex[2] + hex[2], 16);
+        return { r: r / 255, g: g / 255, b: b / 255 };
+      }
+      if (hex.length === 6) {
+        const r = parseInt(hex.slice(0, 2), 16);
+        const g = parseInt(hex.slice(2, 4), 16);
+        const b = parseInt(hex.slice(4, 6), 16);
+        return { r: r / 255, g: g / 255, b: b / 255 };
+      }
+      return null;
+    }
+    const rgbMatch = value.match(/^rgba?\(([^)]+)\)/i);
+    if (rgbMatch) {
+      const parts = rgbMatch[1]
+        .split(",")
+        .map((segment) => parseFloat(segment.trim()))
+        .filter((part) => !Number.isNaN(part));
+      if (parts.length >= 3) {
+        return { r: parts[0] / 255, g: parts[1] / 255, b: parts[2] / 255 };
+      }
+    }
+    return null;
+  }
+
+  function applySnowTint() {
+    if (!wasmExports || typeof wasmExports.snow_set_tint !== "function") return;
+    const parsed = parseColorString(snowTintColor);
+    if (!parsed) return;
+    try {
+      wasmExports.snow_set_tint(parsed.r, parsed.g, parsed.b);
+    } catch (error) {
+      console.warn("Unable to update snow tint", error);
+    }
   }
 
   function configure(options = {}) {
-    snowColor = options.color || snowColor;
-    snowShadowColor = options.shadowColor || snowShadowColor;
-    snowShadowBlur = typeof options.shadowBlur === "number" ? options.shadowBlur : snowShadowBlur;
-    pileColor = options.pileColor || pileColor;
+    if (options.color) {
+      snowTintColor = options.color;
+      applySnowTint();
+    }
   }
 
   return {
@@ -526,6 +275,8 @@ const SnowEffect = (() => {
     toggleFpsOverlay,
   };
 })();
+
+
 
 function getThemeClassName(theme) {
   return `${THEME_CLASS_PREFIX}${theme.toLowerCase()}`;

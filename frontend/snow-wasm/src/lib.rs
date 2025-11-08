@@ -1,885 +1,604 @@
-use std::array;
+mod shaders;
+
+use js_sys::Float32Array;
 use std::cell::RefCell;
-use std::f32::consts::PI;
-use std::thread_local;
+use wasm_bindgen::prelude::*;
+use wasm_bindgen::JsCast;
+use web_sys::{
+    HtmlCanvasElement, WebGl2RenderingContext, WebGlBuffer, WebGlFramebuffer, WebGlProgram,
+    WebGlShader, WebGlTexture, WebGlUniformLocation, WebGlVertexArrayObject,
+};
 
 const TARGET_FPS: f32 = 60.0;
 const FIXED_TIMESTEP: f32 = 1000.0 / TARGET_FPS;
-const MAX_STEPS_PER_FRAME: usize = 4;
 const MAX_PARTICLES: usize = 10_000;
-const MAX_ACTIVE_PARTICLES: usize = MAX_PARTICLES;
-const ACTIVE_RENDER_STRIDE: usize = 3;
-const STATIC_RENDER_STRIDE: usize = 3;
-const GRID_COLS: usize = 32;
-const GRID_ROWS: usize = 22;
-const GRID_CELL_RESERVE: usize = 32;
-const NEIGHBOR_RESERVE: usize = 256;
-const INITIAL_SPAWN: usize = 250;
-const MAX_SPAWN_PER_STEP: usize = 48;
-const SPAWN_RATE_PER_SECOND: f32 = 220.0;
-const SPAWN_RATE_PER_MS: f32 = SPAWN_RATE_PER_SECOND / 1000.0;
-const RELAXATION_STEPS: usize = 1;
-const GRAVITY_SCALE: f32 = 0.0035;
-const TERMINAL_VELOCITY: f32 = 1.9 * 1.35;
-const MIN_CELL_SIZE: f32 = 8.0;
-const GRID_CELL_COUNT: usize = GRID_COLS * GRID_ROWS;
-const ACTIVE_RENDER_CAP: usize = MAX_ACTIVE_PARTICLES * ACTIVE_RENDER_STRIDE;
-const STATIC_RENDER_CAP: usize = MAX_PARTICLES * STATIC_RENDER_STRIDE;
-
-fn clamp_x(width: f32, radius: f32, x: f32) -> f32 {
-    let max_x = (width - radius).max(radius);
-    x.clamp(radius, max_x)
-}
-
-fn clamp_y(height: f32, radius: f32, y: f32) -> f32 {
-    if y + radius > height {
-        height - radius
-    } else {
-        y
-    }
-}
-
-fn wrap_x(mut x: f32, width: f32) -> f32 {
-    if x > width + 5.0 {
-        x = -5.0;
-    } else if x < -5.0 {
-        x = width + 5.0;
-    }
-    x
-}
+const TEXTURE_WIDTH: usize = 128;
+const TEXTURE_HEIGHT: usize = 128;
+const PARTICLE_CAPACITY: usize = TEXTURE_WIDTH * TEXTURE_HEIGHT;
+const TEXEL_STRIDE: usize = 4;
+const TEXTURE_FLOATS: usize = PARTICLE_CAPACITY * TEXEL_STRIDE;
 
 thread_local! {
-    static SIMULATION: RefCell<Option<SnowSimulation>> = RefCell::new(None);
+    static RENDERER: RefCell<Option<SnowRenderer>> = RefCell::new(None);
 }
 
-#[derive(Clone, Copy)]
-struct Particle {
-    x: f32,
-    y: f32,
-    radius: f32,
-    vx: f32,
-    vy: f32,
-    sway: f32,
-    angle: f32,
-    angle_speed: f32,
+#[wasm_bindgen(start)]
+pub fn wasm_start() {
+    #[cfg(feature = "console_error_panic_hook")]
+    console_error_panic_hook::set_once();
 }
 
-#[derive(Clone, Copy)]
-struct StaticParticle {
-    x: f32,
-    y: f32,
-    radius: f32,
+#[wasm_bindgen]
+pub fn snow_init(width: f32, height: f32) -> Result<(), JsValue> {
+    RENDERER.with(|cell| {
+        let renderer = SnowRenderer::new(width.max(1.0), height.max(1.0))?;
+        *cell.borrow_mut() = Some(renderer);
+        Ok(())
+    })
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum OccupantKind {
-    Active,
-    Static,
+#[wasm_bindgen]
+pub fn snow_resize(width: f32, height: f32) -> Result<(), JsValue> {
+    with_renderer(|renderer| renderer.resize(width.max(1.0), height.max(1.0)))
 }
 
-#[derive(Clone, Copy)]
-struct CellOccupant {
-    kind: OccupantKind,
-    index: u32,
+#[wasm_bindgen]
+pub fn snow_pointer_wind(target: f32) {
+    let _ = with_renderer(|renderer| {
+        renderer.pointer_target = target;
+        Ok(())
+    });
 }
 
-const ZERO_PARTICLE: Particle = Particle {
-    x: 0.0,
-    y: 0.0,
-    radius: 0.0,
-    vx: 0.0,
-    vy: 0.0,
-    sway: 0.0,
-    angle: 0.0,
-    angle_speed: 0.0,
-};
-
-const ZERO_STATIC: StaticParticle = StaticParticle {
-    x: 0.0,
-    y: 0.0,
-    radius: 0.0,
-};
-
-const EMPTY_OCCUPANT: CellOccupant = CellOccupant {
-    kind: OccupantKind::Static,
-    index: 0,
-};
-
-struct ParticlePool {
-    data: [Particle; MAX_PARTICLES],
-    len: usize,
+#[wasm_bindgen]
+pub fn snow_step(delta_ms: f32) -> Result<(), JsValue> {
+    with_renderer(|renderer| renderer.step(delta_ms))
 }
 
-impl ParticlePool {
-    fn new() -> Self {
-        Self {
-            data: [ZERO_PARTICLE; MAX_PARTICLES],
-            len: 0,
-        }
-    }
-
-    #[inline(always)]
-    fn len(&self) -> usize {
-        self.len
-    }
-
-    #[inline(always)]
-    fn is_empty(&self) -> bool {
-        self.len == 0
-    }
-
-    #[inline(always)]
-    fn is_full(&self) -> bool {
-        self.len >= MAX_PARTICLES
-    }
-
-    #[inline(always)]
-    fn clear(&mut self) {
-        self.len = 0;
-    }
-
-    #[inline(always)]
-    fn push(&mut self, particle: Particle) -> bool {
-        if self.is_full() {
-            return false;
-        }
-        self.data[self.len] = particle;
-        self.len += 1;
-        true
-    }
-
-    #[inline(always)]
-    fn swap_remove(&mut self, index: usize) -> Option<Particle> {
-        if index >= self.len {
-            return None;
-        }
-        self.len -= 1;
-        let removed = self.data[index];
-        self.data[index] = self.data[self.len];
-        Some(removed)
-    }
-
-    #[inline(always)]
-    fn as_slice(&self) -> &[Particle] {
-        &self.data[..self.len]
-    }
-
-    #[inline(always)]
-    fn as_mut_slice(&mut self) -> &mut [Particle] {
-        let len = self.len;
-        &mut self.data[..len]
-    }
-
-    #[inline(always)]
-    fn get(&self, index: usize) -> &Particle {
-        debug_assert!(index < self.len);
-        &self.data[index]
-    }
-
+#[wasm_bindgen]
+pub fn snow_reset() -> Result<(), JsValue> {
+    with_renderer(|renderer| renderer.reset())
 }
 
-struct StaticPool {
-    data: [StaticParticle; MAX_PARTICLES],
-    len: usize,
+#[wasm_bindgen]
+pub fn snow_set_tint(r: f32, g: f32, b: f32) -> Result<(), JsValue> {
+    with_renderer(|renderer| {
+        renderer.set_tint([r.clamp(0.0, 1.0), g.clamp(0.0, 1.0), b.clamp(0.0, 1.0)]);
+        Ok(())
+    })
 }
 
-impl StaticPool {
-    fn new() -> Self {
-        Self {
-            data: [ZERO_STATIC; MAX_PARTICLES],
-            len: 0,
-        }
-    }
-
-    #[inline(always)]
-    fn len(&self) -> usize {
-        self.len
-    }
-
-    #[inline(always)]
-    fn clear(&mut self) {
-        self.len = 0;
-    }
-
-    #[inline(always)]
-    fn push(&mut self, particle: StaticParticle) -> bool {
-        if self.len >= MAX_PARTICLES {
-            return false;
-        }
-        self.data[self.len] = particle;
-        self.len += 1;
-        true
-    }
-
-    #[inline(always)]
-    fn as_slice(&self) -> &[StaticParticle] {
-        &self.data[..self.len]
-    }
-
-    #[inline(always)]
-    fn as_mut_slice(&mut self) -> &mut [StaticParticle] {
-        let len = self.len;
-        &mut self.data[..len]
-    }
-
+#[wasm_bindgen]
+pub fn snow_dynamic_count() -> u32 {
+    MAX_PARTICLES as u32
 }
 
-struct CellList {
-    occupants: [CellOccupant; GRID_CELL_RESERVE],
-    len: usize,
+#[wasm_bindgen]
+pub fn snow_inactive_count() -> u32 {
+    0
 }
 
-impl CellList {
-    fn new() -> Self {
-        Self {
-            occupants: [EMPTY_OCCUPANT; GRID_CELL_RESERVE],
-            len: 0,
-        }
-    }
-
-    #[inline(always)]
-    fn clear(&mut self) {
-        self.len = 0;
-    }
-
-    #[inline(always)]
-    fn push(&mut self, occupant: CellOccupant) {
-        if self.len < GRID_CELL_RESERVE {
-            self.occupants[self.len] = occupant;
-            self.len += 1;
-        }
-    }
-
-    #[inline(always)]
-    fn iter(&self) -> &[CellOccupant] {
-        &self.occupants[..self.len]
-    }
-}
-
-struct NeighborBuffer {
-    data: [CellOccupant; NEIGHBOR_RESERVE],
-    len: usize,
-}
-
-impl NeighborBuffer {
-    fn new() -> Self {
-        Self {
-            data: [EMPTY_OCCUPANT; NEIGHBOR_RESERVE],
-            len: 0,
-        }
-    }
-
-    #[inline(always)]
-    fn clear(&mut self) {
-        self.len = 0;
-    }
-
-    #[inline(always)]
-    fn extend(&mut self, occupants: &[CellOccupant]) {
-        for &occupant in occupants {
-            if self.len >= NEIGHBOR_RESERVE {
-                break;
-            }
-            self.data[self.len] = occupant;
-            self.len += 1;
-        }
-    }
-
-    #[inline(always)]
-    fn iter(&self) -> &[CellOccupant] {
-        &self.data[..self.len]
-    }
-}
-
-struct IndexBuffer<const N: usize> {
-    data: [usize; N],
-    len: usize,
-}
-
-impl<const N: usize> IndexBuffer<N> {
-    const fn new() -> Self {
-        Self {
-            data: [0; N],
-            len: 0,
-        }
-    }
-
-    #[inline(always)]
-    fn clear(&mut self) {
-        self.len = 0;
-    }
-
-    #[inline(always)]
-    fn push(&mut self, value: usize) {
-        if self.len < N {
-            self.data[self.len] = value;
-            self.len += 1;
-        }
-    }
-
-    #[inline(always)]
-    fn is_empty(&self) -> bool {
-        self.len == 0
-    }
-
-    fn sort_and_dedup(&mut self) {
-        self.data[..self.len].sort_unstable();
-        let mut unique = 0;
-        for i in 1..self.len {
-            if self.data[i] != self.data[unique] {
-                unique += 1;
-                self.data[unique] = self.data[i];
-            }
-        }
-        if self.len > 0 {
-            self.len = unique + 1;
-        }
-    }
-
-    #[inline(always)]
-    fn pop(&mut self) -> Option<usize> {
-        if self.len == 0 {
-            None
-        } else {
-            self.len -= 1;
-            Some(self.data[self.len])
-        }
-    }
-}
-
-struct SnowSimulation {
-    width: f32,
-    height: f32,
-    pointer_target: f32,
-    pointer_current: f32,
-    rng_state: u32,
-    active: ParticlePool,
-    frozen: StaticPool,
-    render_active: [f32; ACTIVE_RENDER_CAP],
-    render_static: [f32; STATIC_RENDER_CAP],
-    active_render_len: usize,
-    static_render_len: usize,
-    grid_cells: [CellList; GRID_CELL_COUNT],
-    grid_cell_width: f32,
-    grid_cell_height: f32,
-    grid_inv_cell_width: f32,
-    grid_inv_cell_height: f32,
-    neighbor_buffer: NeighborBuffer,
-    spawn_accumulator: f32,
-    freeze_queue: IndexBuffer<MAX_PARTICLES>,
-}
-
-impl SnowSimulation {
-    fn new(width: f32, height: f32) -> Self {
-        let grid_cells = array::from_fn(|_| CellList::new());
-        let mut sim = SnowSimulation {
-            width,
-            height,
-            pointer_target: 0.0,
-            pointer_current: 0.0,
-            rng_state: 0x5EED5EED,
-            active: ParticlePool::new(),
-            frozen: StaticPool::new(),
-            render_active: [0.0; ACTIVE_RENDER_CAP],
-            render_static: [0.0; STATIC_RENDER_CAP],
-            active_render_len: 0,
-            static_render_len: 0,
-            grid_cells,
-            grid_cell_width: MIN_CELL_SIZE,
-            grid_cell_height: MIN_CELL_SIZE,
-            grid_inv_cell_width: 0.0,
-            grid_inv_cell_height: 0.0,
-            neighbor_buffer: NeighborBuffer::new(),
-            spawn_accumulator: 0.0,
-            freeze_queue: IndexBuffer::new(),
-        };
-        sim.update_grid_metrics();
-        sim.populate_particles();
-        sim.update_render_buffers();
-        sim
-    }
-
-    fn populate_particles(&mut self) {
-        self.active.clear();
-        self.frozen.clear();
-        self.spawn_accumulator = 0.0;
-        for _ in 0..INITIAL_SPAWN.min(MAX_PARTICLES) {
-            let particle = self.create_particle(None);
-            if !self.active.push(particle) {
-                break;
-            }
-        }
-    }
-
-    fn create_particle(&mut self, initial_y: Option<f32>) -> Particle {
-        let radius = self.rand_range(1.2, 3.2);
-        Particle {
-            x: self.rand() * self.width.max(1.0),
-            y: initial_y.unwrap_or_else(|| self.rand() * self.height.max(1.0)),
-            radius,
-            vx: 0.0,
-            vy: self.rand_range(0.25, 0.95),
-            sway: self.rand_range(0.3, 0.95),
-            angle: self.rand() * 2.0 * PI,
-            angle_speed: self.rand_range(0.007, 0.037),
-        }
-    }
-
-    fn rand(&mut self) -> f32 {
-        self.rng_state = self
-            .rng_state
-            .wrapping_mul(1664525)
-            .wrapping_add(1013904223);
-        let value = (self.rng_state >> 8) as f32;
-        value / ((u32::MAX >> 8) as f32)
-    }
-
-    fn rand_range(&mut self, min: f32, max: f32) -> f32 {
-        min + (max - min) * self.rand()
-    }
-
-    fn clear_grid(&mut self) {
-        for cell in &mut self.grid_cells {
-            cell.clear();
-        }
-    }
-
-    fn update_grid_metrics(&mut self) {
-        self.grid_cell_width = (self.width / GRID_COLS as f32).max(MIN_CELL_SIZE);
-        self.grid_cell_height = (self.height / GRID_ROWS as f32).max(MIN_CELL_SIZE);
-        self.grid_inv_cell_width = if self.grid_cell_width > 0.0 {
-            1.0 / self.grid_cell_width
-        } else {
-            0.0
-        };
-        self.grid_inv_cell_height = if self.grid_cell_height > 0.0 {
-            1.0 / self.grid_cell_height
-        } else {
-            0.0
-        };
-    }
-
-    fn push_to_grid(&mut self, kind: OccupantKind, index: usize, x: f32, y: f32) {
-        if self.grid_cell_width <= 0.0 || self.grid_cell_height <= 0.0 {
-            return;
-        }
-        let col =
-            ((x * self.grid_inv_cell_width) as isize).clamp(0, (GRID_COLS as isize) - 1) as usize;
-        let row = ((y * self.grid_inv_cell_height) as isize)
-            .clamp(0, (GRID_ROWS as isize) - 1) as usize;
-        let cell_index = row * GRID_COLS + col;
-        debug_assert!(cell_index < GRID_CELL_COUNT);
-        debug_assert!(index <= u32::MAX as usize);
-        self.grid_cells[cell_index].push(CellOccupant {
-            kind,
-            index: index as u32,
-        });
-    }
-
-    fn rebuild_grid(&mut self, include_active: bool) {
-        self.clear_grid();
-        let frozen_len = self.frozen.len();
-        for index in 0..frozen_len {
-            let particle = self.frozen.as_slice()[index];
-            self.push_to_grid(OccupantKind::Static, index, particle.x, particle.y);
-        }
-        if include_active {
-            let active_len = self.active.len();
-            for index in 0..active_len {
-                let particle = self.active.get(index);
-                self.push_to_grid(OccupantKind::Active, index, particle.x, particle.y);
-            }
-        }
-    }
-
-    fn collect_neighbors(&mut self, x: f32, y: f32, radius: f32) {
-        self.neighbor_buffer.clear();
-        if self.grid_cell_width <= 0.0 || self.grid_cell_height <= 0.0 {
-            return;
-        }
-        let reach_x = radius * 2.5;
-        let reach_y = radius * 2.5;
-        let min_col = ((x - reach_x) * self.grid_inv_cell_width)
-            .floor()
-            .max(0.0) as usize;
-        let max_col = ((x + reach_x) * self.grid_inv_cell_width)
-            .ceil()
-            .min((GRID_COLS - 1) as f32) as usize;
-        let min_row = ((y - reach_y) * self.grid_inv_cell_height)
-            .floor()
-            .max(0.0) as usize;
-        let max_row = ((y + reach_y) * self.grid_inv_cell_height)
-            .ceil()
-            .min((GRID_ROWS - 1) as f32) as usize;
-        for row in min_row..=max_row {
-            for col in min_col..=max_col {
-                let idx = row * GRID_COLS + col;
-                let cell = &self.grid_cells[idx];
-                self.neighbor_buffer.extend(cell.iter());
-            }
-        }
-    }
-
-    fn freeze_active(&mut self, index: usize) {
-        if index >= self.active.len() {
-            return;
-        }
-        if let Some(particle) = self.active.swap_remove(index) {
-            let radius = particle.radius;
-            let clamped_x = clamp_x(self.width, radius, particle.x);
-            let clamped_y = clamp_y(self.height, radius, particle.y);
-            let _ = self.frozen.push(StaticParticle {
-                x: clamped_x,
-                y: clamped_y,
-                radius,
-            });
-        }
-    }
-
-    fn apply_freezes(&mut self) {
-        if self.freeze_queue.is_empty() {
-            return;
-        }
-        self.freeze_queue.sort_and_dedup();
-        while let Some(index) = self.freeze_queue.pop() {
-            self.freeze_active(index);
-        }
-    }
-
-    fn update_active_particles(&mut self, wind: f32, delta_ratio: f32) {
-        for particle in self.active.as_mut_slice().iter_mut() {
-            particle.angle += particle.angle_speed * delta_ratio;
-            let sway = particle.angle.sin() * particle.sway;
-            particle.vx += (sway + wind - particle.vx) * 0.08 * delta_ratio;
-            particle.vy = (particle.vy
-                + GRAVITY_SCALE * (1.0 + particle.radius * 0.35) * delta_ratio)
-                .min(TERMINAL_VELOCITY);
-            particle.x += particle.vx * delta_ratio;
-            particle.y += particle.vy * 1.8 * delta_ratio;
-            particle.x = wrap_x(particle.x, self.width);
-        }
-    }
-
-    fn spawn_new_particles(&mut self, delta_ms: f32) {
-        if self.active.len() + self.frozen.len() >= MAX_PARTICLES {
-            return;
-        }
-        self.spawn_accumulator += delta_ms * SPAWN_RATE_PER_MS;
-        let spawn_ready = self.spawn_accumulator.floor() as usize;
-        if spawn_ready == 0 {
-            return;
-        }
-        let available = MAX_PARTICLES - (self.active.len() + self.frozen.len());
-        let to_spawn = spawn_ready.min(available).min(MAX_SPAWN_PER_STEP);
-        for _ in 0..to_spawn {
-            let particle = self.create_particle(Some(-20.0));
-            if !self.active.push(particle) {
-                break;
-            }
-        }
-        self.spawn_accumulator -= to_spawn as f32;
-    }
-
-    fn resolve_particle_collisions(&mut self, index: usize) -> bool {
-        let active_len = self.active.len();
-        if index >= active_len {
-            return false;
-        }
-        let (px, py, pr) = {
-            let particle = self.active.get(index);
-            (particle.x, particle.y, particle.radius)
-        };
-        self.collect_neighbors(px, py, pr);
-        let slice = self.active.as_mut_slice();
-        let (left, rest) = slice.split_at_mut(index);
-        let (particle, right) = rest.split_first_mut().unwrap();
-        let mut support_contacts = 0;
-        for &entry in self.neighbor_buffer.iter() {
-            let entry_index = entry.index as usize;
-            if entry.kind == OccupantKind::Active && entry_index == index {
-                continue;
-            }
-            match entry.kind {
-                OccupantKind::Active => {
-                    if entry_index >= active_len {
-                        continue;
-                    }
-                    let neighbor = if entry_index < index {
-                        &mut left[entry_index]
-                    } else {
-                        &mut right[entry_index - index - 1]
-                    };
-                    resolve_pair(particle, neighbor, &mut support_contacts);
-                }
-                OccupantKind::Static => {
-                    if entry_index >= self.frozen.len() {
-                        continue;
-                    }
-                    let neighbor = self.frozen.as_slice()[entry_index];
-                    resolve_with_static(particle, neighbor, &mut support_contacts);
-                }
-            }
-        }
-
-        if particle.y + particle.radius >= self.height - 1.0 {
-            particle.y = self.height - particle.radius;
-            support_contacts += 2;
-        }
-
-        particle.x = wrap_x(particle.x, self.width);
-        support_contacts >= 2
-    }
-
-    fn run_collision_relaxation(&mut self) {
-        if self.active.is_empty() {
-            return;
-        }
-        self.rebuild_grid(true);
-        for step in 0..RELAXATION_STEPS {
-            self.freeze_queue.clear();
-            let active_len = self.active.len();
-            for index in 0..active_len {
-                if self.resolve_particle_collisions(index) {
-                    self.freeze_queue.push(index);
-                }
-            }
-            if !self.freeze_queue.is_empty() {
-                self.apply_freezes();
-            }
-            if step + 1 < RELAXATION_STEPS && !self.active.is_empty() {
-                self.rebuild_grid(true);
-            }
-        }
-    }
-
-    fn update_render_buffers(&mut self) {
-        let max_active = ACTIVE_RENDER_CAP / ACTIVE_RENDER_STRIDE;
-        let active_slice = self.active.as_slice();
-        let active_count = active_slice.len().min(max_active);
-        self.active_render_len = active_count * ACTIVE_RENDER_STRIDE;
-        for (i, particle) in active_slice.iter().take(active_count).enumerate() {
-            let base = i * ACTIVE_RENDER_STRIDE;
-            self.render_active[base] = particle.x;
-            self.render_active[base + 1] = particle.y;
-            self.render_active[base + 2] = particle.radius;
-        }
-
-        let max_static = STATIC_RENDER_CAP / STATIC_RENDER_STRIDE;
-        let frozen_slice = self.frozen.as_slice();
-        let static_total = frozen_slice.len().min(max_static);
-        self.static_render_len = static_total * STATIC_RENDER_STRIDE;
-        let mut offset = 0;
-        for particle in frozen_slice.iter().take(static_total) {
-            if offset >= self.static_render_len {
-                break;
-            }
-            self.render_static[offset] = particle.x;
-            self.render_static[offset + 1] = particle.y;
-            self.render_static[offset + 2] = particle.radius;
-            offset += STATIC_RENDER_STRIDE;
-        }
-    }
-
-    fn resize(&mut self, width: f32, height: f32) {
-        self.width = width;
-        self.height = height;
-        self.update_grid_metrics();
-        for particle in self.active.as_mut_slice().iter_mut() {
-            particle.x = particle.x.clamp(0.0, self.width);
-            particle.y = particle.y.clamp(0.0, self.height);
-        }
-        for particle in self.frozen.as_mut_slice().iter_mut() {
-            particle.x = clamp_x(self.width, particle.radius, particle.x);
-            particle.y = clamp_y(self.height, particle.radius, particle.y);
-        }
-        self.update_render_buffers();
-    }
-
-    fn step(&mut self, delta_ms: f32) {
-        if delta_ms <= 0.0 {
-            return;
-        }
-        let clamped_delta = delta_ms.min(1000.0);
-        let delta_ratio = (clamped_delta / FIXED_TIMESTEP).clamp(0.1, 3.5);
-        self.pointer_current += (self.pointer_target - self.pointer_current) * 0.02 * delta_ratio;
-        let wind = self.pointer_current * 2.2;
-        self.spawn_new_particles(clamped_delta);
-        self.update_active_particles(wind, delta_ratio);
-        self.run_collision_relaxation();
-        self.update_render_buffers();
-    }
-
-    fn set_pointer_target(&mut self, target: f32) {
-        self.pointer_target = target;
-    }
-
-    fn reset(&mut self) {
-        self.pointer_current = 0.0;
-        self.pointer_target = 0.0;
-        self.frozen.clear();
-        self.populate_particles();
-        self.update_render_buffers();
-    }
-
-    fn active_ptr(&self) -> *const f32 {
-        self.render_active.as_ptr()
-    }
-
-    fn static_ptr(&self) -> *const f32 {
-        self.render_static.as_ptr()
-    }
-
-    fn active_len(&self) -> u32 {
-        self.active_render_len as u32
-    }
-
-    fn static_len(&self) -> u32 {
-        self.static_render_len as u32
-    }
-
-    fn dynamic_count(&self) -> u32 {
-        self.active.len() as u32
-    }
-
-    fn inactive_count(&self) -> u32 {
-        self.frozen.len() as u32
-    }
-}
-
-fn resolve_pair(particle: &mut Particle, neighbor: &mut Particle, support_contacts: &mut i32) {
-    let dx = particle.x - neighbor.x;
-    let dy = particle.y - neighbor.y;
-    if dy <= 0.0 {
-        return;
-    }
-    let distance = (dx * dx + dy * dy).sqrt().max(0.0001);
-    let min_dist = particle.radius + neighbor.radius + 0.25;
-    if distance >= min_dist {
-        return;
-    }
-    let overlap = min_dist - distance;
-    let nx = dx / distance;
-    let ny = dy / distance;
-    let compression = overlap * 0.65 + 0.02;
-    particle.x += nx * compression;
-    particle.y += ny * compression;
-    particle.vx += nx * compression * 0.04;
-    particle.vy += ny * compression * 0.04;
-    neighbor.x -= nx * compression;
-    neighbor.y -= ny * compression;
-    neighbor.vx -= nx * compression * 0.04;
-    neighbor.vy -= ny * compression * 0.04;
-    if ny > 0.35 {
-        *support_contacts += 1;
-    }
-}
-
-fn resolve_with_static(
-    particle: &mut Particle,
-    neighbor: StaticParticle,
-    support_contacts: &mut i32,
-) {
-    let dx = particle.x - neighbor.x;
-    let dy = particle.y - neighbor.y;
-    if dy <= 0.0 {
-        return;
-    }
-    let distance = (dx * dx + dy * dy).sqrt().max(0.0001);
-    let min_dist = particle.radius + neighbor.radius + 0.25;
-    if distance >= min_dist {
-        return;
-    }
-    let overlap = min_dist - distance;
-    let nx = dx / distance;
-    let ny = dy / distance;
-    let compression = overlap * 0.65 + 0.02;
-    particle.x += nx * compression;
-    particle.y += ny * compression;
-    particle.vx += nx * compression * 0.04;
-    particle.vy += ny * compression * 0.04;
-    if ny > 0.35 {
-        *support_contacts += 1;
-    }
-}
-
-fn with_simulation<F, R>(default: R, mut f: F) -> R
+fn with_renderer<F, R>(f: F) -> Result<R, JsValue>
 where
-    F: FnMut(&mut SnowSimulation) -> R,
+    F: FnOnce(&mut SnowRenderer) -> Result<R, JsValue>,
 {
-    SIMULATION.with(|cell| {
+    RENDERER.with(|cell| {
         let mut borrow = cell.borrow_mut();
-        if let Some(sim) = borrow.as_mut() {
-            f(sim)
-        } else {
-            default
+        match borrow.as_mut() {
+            Some(renderer) => f(renderer),
+            None => Err(js_err("snow renderer is not initialized")),
         }
     })
 }
 
-#[no_mangle]
-pub extern "C" fn snow_init(width: f32, height: f32) {
-    SIMULATION.with(|cell| {
-        *cell.borrow_mut() = Some(SnowSimulation::new(width.max(1.0), height.max(1.0)));
-    });
+fn js_err(message: &str) -> JsValue {
+    JsValue::from_str(message)
 }
 
-#[no_mangle]
-pub extern "C" fn snow_resize(width: f32, height: f32) {
-    with_simulation((), |sim| sim.resize(width.max(1.0), height.max(1.0)));
+struct SnowRenderer {
+    canvas: HtmlCanvasElement,
+    gl: WebGl2RenderingContext,
+    compute_program: WebGlProgram,
+    render_program: WebGlProgram,
+    quad_vao: WebGlVertexArrayObject,
+    render_vao: WebGlVertexArrayObject,
+    _particle_buffer: WebGlBuffer,
+    framebuffer: WebGlFramebuffer,
+    textures: [WebGlTexture; 2],
+    current_src: usize,
+    width: f32,
+    height: f32,
+    pointer_target: f32,
+    pointer_current: f32,
+    time_ms: f32,
+    rng_state: u32,
+    tint: [f32; 3],
+    texture_size: [f32; 2],
+    compute_uniforms: ComputeUniforms,
+    render_uniforms: RenderUniforms,
 }
 
-#[no_mangle]
-pub extern "C" fn snow_pointer_wind(target: f32) {
-    with_simulation((), |sim| sim.set_pointer_target(target));
+#[derive(Default)]
+struct ComputeUniforms {
+    source: Option<WebGlUniformLocation>,
+    viewport: Option<WebGlUniformLocation>,
+    texture_size: Option<WebGlUniformLocation>,
+    delta_ms: Option<WebGlUniformLocation>,
+    time: Option<WebGlUniformLocation>,
+    wind: Option<WebGlUniformLocation>,
 }
 
-#[no_mangle]
-pub extern "C" fn snow_step(delta_ms: f32) {
-    with_simulation((), |sim| {
-        let clamped = delta_ms.clamp(0.1, 100.0);
-        let mut remaining = clamped;
-        for _ in 0..MAX_STEPS_PER_FRAME {
-            let step_delta = remaining.min(FIXED_TIMESTEP);
-            sim.step(step_delta);
-            if remaining <= FIXED_TIMESTEP {
-                break;
-            }
-            remaining -= FIXED_TIMESTEP;
+#[derive(Default)]
+struct RenderUniforms {
+    particles: Option<WebGlUniformLocation>,
+    viewport: Option<WebGlUniformLocation>,
+    texture_size: Option<WebGlUniformLocation>,
+    point_scale: Option<WebGlUniformLocation>,
+    tint: Option<WebGlUniformLocation>,
+}
+
+impl SnowRenderer {
+    fn new(width: f32, height: f32) -> Result<Self, JsValue> {
+        if MAX_PARTICLES > PARTICLE_CAPACITY {
+            return Err(js_err("particle capacity must be >= MAX_PARTICLES"));
         }
-    });
-}
 
-#[no_mangle]
-pub extern "C" fn snow_active_ptr() -> *const f32 {
-    with_simulation(std::ptr::null(), |sim| sim.active_ptr())
-}
+        let window = web_sys::window().ok_or_else(|| js_err("missing window"))?;
+        let document = window
+            .document()
+            .ok_or_else(|| js_err("missing document"))?;
 
-#[no_mangle]
-pub extern "C" fn snow_active_len() -> u32 {
-    with_simulation(0, |sim| sim.active_len())
-}
+        let canvas = document
+            .get_element_by_id("snow-canvas")
+            .ok_or_else(|| js_err("missing #snow-canvas element"))?
+            .dyn_into::<HtmlCanvasElement>()?;
 
-#[no_mangle]
-pub extern "C" fn snow_static_ptr() -> *const f32 {
-    with_simulation(std::ptr::null(), |sim| sim.static_ptr())
-}
+        canvas.set_width(width as u32);
+        canvas.set_height(height as u32);
 
-#[no_mangle]
-pub extern "C" fn snow_static_len() -> u32 {
-    with_simulation(0, |sim| sim.static_len())
-}
+        let gl: WebGl2RenderingContext = canvas
+            .get_context("webgl2")?
+            .ok_or_else(|| js_err("WebGL2 not supported"))?
+            .dyn_into()?;
 
-#[no_mangle]
-pub extern "C" fn snow_dynamic_count() -> u32 {
-    with_simulation(0, |sim| sim.dynamic_count())
-}
+        gl.get_extension("EXT_color_buffer_float")
+            .map_err(|_| js_err("unable to enable EXT_color_buffer_float"))?;
 
-#[no_mangle]
-pub extern "C" fn snow_inactive_count() -> u32 {
-    with_simulation(0, |sim| sim.inactive_count())
-}
+        gl.enable(WebGl2RenderingContext::BLEND);
+        gl.blend_func(
+            WebGl2RenderingContext::SRC_ALPHA,
+            WebGl2RenderingContext::ONE_MINUS_SRC_ALPHA,
+        );
+        gl.disable(WebGl2RenderingContext::DEPTH_TEST);
+        gl.disable(WebGl2RenderingContext::CULL_FACE);
 
-#[no_mangle]
-pub extern "C" fn snow_reset() {
-    with_simulation((), |sim| sim.reset());
+        let compute_program =
+            Self::link_program(&gl, shaders::COMPUTE_VERTEX, shaders::COMPUTE_FRAGMENT)?;
+        let render_program =
+            Self::link_program(&gl, shaders::RENDER_VERTEX, shaders::RENDER_FRAGMENT)?;
+
+        let quad_vao = gl
+            .create_vertex_array()
+            .ok_or_else(|| js_err("failed to create compute VAO"))?;
+        gl.bind_vertex_array(Some(&quad_vao));
+        gl.bind_vertex_array(None);
+
+        let render_vao = gl
+            .create_vertex_array()
+            .ok_or_else(|| js_err("failed to create render VAO"))?;
+        gl.bind_vertex_array(Some(&render_vao));
+
+        let particle_buffer = gl
+            .create_buffer()
+            .ok_or_else(|| js_err("failed to create particle buffer"))?;
+        gl.bind_buffer(WebGl2RenderingContext::ARRAY_BUFFER, Some(&particle_buffer));
+
+        let uv_data = Self::generate_particle_uvs();
+        unsafe {
+            let view = Float32Array::view(&uv_data);
+            gl.buffer_data_with_array_buffer_view(
+                WebGl2RenderingContext::ARRAY_BUFFER,
+                &view,
+                WebGl2RenderingContext::STATIC_DRAW,
+            );
+        }
+        gl.vertex_attrib_pointer_with_i32(0, 2, WebGl2RenderingContext::FLOAT, false, 0, 0);
+        gl.enable_vertex_attrib_array(0);
+        gl.bind_vertex_array(None);
+
+        let framebuffer = gl
+            .create_framebuffer()
+            .ok_or_else(|| js_err("failed to create framebuffer"))?;
+
+        let mut rng_state = 0x5EED_A55E;
+        let initial_data = Self::initial_texture_data(width, height, &mut rng_state);
+        let textures = [
+            Self::upload_texture(&gl, &initial_data)?,
+            Self::upload_texture(&gl, &initial_data)?,
+        ];
+
+        let mut renderer = SnowRenderer {
+            canvas,
+            gl,
+            compute_program,
+            render_program,
+            quad_vao,
+            render_vao,
+            _particle_buffer: particle_buffer,
+            framebuffer,
+            textures,
+            current_src: 0,
+            width,
+            height,
+            pointer_target: 0.0,
+            pointer_current: 0.0,
+            time_ms: 0.0,
+            rng_state,
+            tint: [1.0, 1.0, 1.0],
+            texture_size: [TEXTURE_WIDTH as f32, TEXTURE_HEIGHT as f32],
+            compute_uniforms: ComputeUniforms::default(),
+            render_uniforms: RenderUniforms::default(),
+        };
+
+        renderer.compute_uniforms = renderer.cache_compute_uniforms()?;
+        renderer.render_uniforms = renderer.cache_render_uniforms()?;
+        renderer.apply_static_uniforms();
+
+        Ok(renderer)
+    }
+
+    fn cache_compute_uniforms(&self) -> Result<ComputeUniforms, JsValue> {
+        Ok(ComputeUniforms {
+            source: self
+                .gl
+                .get_uniform_location(&self.compute_program, "u_source"),
+            viewport: self
+                .gl
+                .get_uniform_location(&self.compute_program, "u_viewport"),
+            texture_size: self
+                .gl
+                .get_uniform_location(&self.compute_program, "u_textureSize"),
+            delta_ms: self
+                .gl
+                .get_uniform_location(&self.compute_program, "u_deltaMs"),
+            time: self
+                .gl
+                .get_uniform_location(&self.compute_program, "u_time"),
+            wind: self
+                .gl
+                .get_uniform_location(&self.compute_program, "u_wind"),
+        })
+    }
+
+    fn cache_render_uniforms(&self) -> Result<RenderUniforms, JsValue> {
+        Ok(RenderUniforms {
+            particles: self
+                .gl
+                .get_uniform_location(&self.render_program, "u_particles"),
+            viewport: self
+                .gl
+                .get_uniform_location(&self.render_program, "u_viewport"),
+            texture_size: self
+                .gl
+                .get_uniform_location(&self.render_program, "u_textureSize"),
+            point_scale: self
+                .gl
+                .get_uniform_location(&self.render_program, "u_pointScale"),
+            tint: self.gl.get_uniform_location(&self.render_program, "u_tint"),
+        })
+    }
+
+    fn apply_static_uniforms(&self) {
+        self.gl.use_program(Some(&self.compute_program));
+        if let Some(source) = &self.compute_uniforms.source {
+            self.gl.uniform1i(Some(source), 0);
+        }
+        if let Some(texture_size) = &self.compute_uniforms.texture_size {
+            self.gl.uniform2f(
+                Some(texture_size),
+                self.texture_size[0],
+                self.texture_size[1],
+            );
+        }
+
+        self.gl.use_program(Some(&self.render_program));
+        if let Some(particles) = &self.render_uniforms.particles {
+            self.gl.uniform1i(Some(particles), 0);
+        }
+        if let Some(texture_size) = &self.render_uniforms.texture_size {
+            self.gl.uniform2f(
+                Some(texture_size),
+                self.texture_size[0],
+                self.texture_size[1],
+            );
+        }
+        if let Some(tint) = &self.render_uniforms.tint {
+            self.gl
+                .uniform3f(Some(tint), self.tint[0], self.tint[1], self.tint[2]);
+        }
+    }
+
+    fn resize(&mut self, width: f32, height: f32) -> Result<(), JsValue> {
+        self.width = width.max(1.0);
+        self.height = height.max(1.0);
+        self.canvas.set_width(self.width as u32);
+        self.canvas.set_height(self.height as u32);
+        Ok(())
+    }
+
+    fn reset(&mut self) -> Result<(), JsValue> {
+        self.pointer_target = 0.0;
+        self.pointer_current = 0.0;
+        self.time_ms = 0.0;
+        self.rng_state = 0x5EED_A55E;
+        let data = Self::initial_texture_data(self.width, self.height, &mut self.rng_state);
+        for texture in &self.textures {
+            self.upload_texture_data(texture, &data)?;
+        }
+        Ok(())
+    }
+
+    fn step(&mut self, delta_ms: f32) -> Result<(), JsValue> {
+        if delta_ms <= 0.0 {
+            return Ok(());
+        }
+        let clamped = delta_ms.min(1000.0);
+        self.time_ms += clamped;
+        let smoothing = (clamped / FIXED_TIMESTEP).clamp(0.05, 1.0) * 0.15;
+        self.pointer_current += (self.pointer_target - self.pointer_current) * smoothing;
+        self.run_compute_pass(clamped)?;
+        self.render_pass()?;
+        Ok(())
+    }
+
+    fn run_compute_pass(&mut self, delta_ms: f32) -> Result<(), JsValue> {
+        let target = 1 - self.current_src;
+        self.gl.bind_vertex_array(Some(&self.quad_vao));
+        self.gl.use_program(Some(&self.compute_program));
+        self.gl
+            .bind_framebuffer(WebGl2RenderingContext::FRAMEBUFFER, Some(&self.framebuffer));
+        self.gl.framebuffer_texture_2d(
+            WebGl2RenderingContext::FRAMEBUFFER,
+            WebGl2RenderingContext::COLOR_ATTACHMENT0,
+            WebGl2RenderingContext::TEXTURE_2D,
+            Some(&self.textures[target]),
+            0,
+        );
+        self.gl
+            .viewport(0, 0, TEXTURE_WIDTH as i32, TEXTURE_HEIGHT as i32);
+
+        self.gl.active_texture(WebGl2RenderingContext::TEXTURE0);
+        self.gl.bind_texture(
+            WebGl2RenderingContext::TEXTURE_2D,
+            Some(&self.textures[self.current_src]),
+        );
+
+        if let Some(viewport) = &self.compute_uniforms.viewport {
+            self.gl.uniform2f(Some(viewport), self.width, self.height);
+        }
+        if let Some(delta) = &self.compute_uniforms.delta_ms {
+            self.gl.uniform1f(Some(delta), delta_ms);
+        }
+        if let Some(time) = &self.compute_uniforms.time {
+            self.gl.uniform1f(Some(time), self.time_ms);
+        }
+        if let Some(wind) = &self.compute_uniforms.wind {
+            self.gl.uniform1f(Some(wind), self.pointer_current);
+        }
+
+        self.gl.draw_arrays(WebGl2RenderingContext::TRIANGLES, 0, 3);
+        self.gl
+            .bind_framebuffer(WebGl2RenderingContext::FRAMEBUFFER, None);
+        self.current_src = target;
+        Ok(())
+    }
+
+    fn render_pass(&self) -> Result<(), JsValue> {
+        self.gl.bind_vertex_array(Some(&self.render_vao));
+        self.gl.use_program(Some(&self.render_program));
+        self.gl
+            .bind_framebuffer(WebGl2RenderingContext::FRAMEBUFFER, None);
+        self.gl.viewport(
+            0,
+            0,
+            self.canvas.width() as i32,
+            self.canvas.height() as i32,
+        );
+        self.gl.clear_color(0.0, 0.0, 0.0, 0.0);
+        self.gl.clear(WebGl2RenderingContext::COLOR_BUFFER_BIT);
+        self.gl.active_texture(WebGl2RenderingContext::TEXTURE0);
+        self.gl.bind_texture(
+            WebGl2RenderingContext::TEXTURE_2D,
+            Some(&self.textures[self.current_src]),
+        );
+
+        if let Some(viewport) = &self.render_uniforms.viewport {
+            self.gl.uniform2f(Some(viewport), self.width, self.height);
+        }
+        if let Some(point_scale) = &self.render_uniforms.point_scale {
+            self.gl.uniform1f(Some(point_scale), self.point_scale());
+        }
+        if let Some(tint) = &self.render_uniforms.tint {
+            self.gl
+                .uniform3f(Some(tint), self.tint[0], self.tint[1], self.tint[2]);
+        }
+
+        self.gl
+            .draw_arrays(WebGl2RenderingContext::POINTS, 0, MAX_PARTICLES as i32);
+
+        Ok(())
+    }
+
+    fn point_scale(&self) -> f32 {
+        let canvas_height = self.canvas.height() as f32;
+        if self.height <= 0.0 {
+            return 2.0;
+        }
+        (canvas_height / self.height).max(1.0) * 2.0
+    }
+
+    fn set_tint(&mut self, tint: [f32; 3]) {
+        self.tint = tint;
+        if let Some(location) = &self.render_uniforms.tint {
+            self.gl.use_program(Some(&self.render_program));
+            self.gl
+                .uniform3f(Some(location), self.tint[0], self.tint[1], self.tint[2]);
+        }
+    }
+
+    fn upload_texture_data(&self, texture: &WebGlTexture, data: &[f32]) -> Result<(), JsValue> {
+        self.gl
+            .bind_texture(WebGl2RenderingContext::TEXTURE_2D, Some(texture));
+        unsafe {
+            let view = Float32Array::view(data);
+            self.gl
+                .tex_sub_image_2d_with_i32_and_i32_and_u32_and_type_and_opt_array_buffer_view(
+                    WebGl2RenderingContext::TEXTURE_2D,
+                    0,
+                    0,
+                    0,
+                    TEXTURE_WIDTH as i32,
+                    TEXTURE_HEIGHT as i32,
+                    WebGl2RenderingContext::RGBA,
+                    WebGl2RenderingContext::FLOAT,
+                    Some(&view),
+                )?;
+        }
+        Ok(())
+    }
+
+    fn initial_texture_data(width: f32, height: f32, rng_state: &mut u32) -> Vec<f32> {
+        let mut data = vec![0.0; TEXTURE_FLOATS];
+        for slot in 0..PARTICLE_CAPACITY {
+            let base = slot * TEXEL_STRIDE;
+            if slot < MAX_PARTICLES {
+                let radius = Self::rand_range(rng_state, 0.8, 2.8);
+                data[base] = Self::rand(rng_state) * width.max(1.0);
+                data[base + 1] = -radius - Self::rand(rng_state) * height.max(1.0);
+                data[base + 2] = radius;
+                data[base + 3] = Self::rand(rng_state);
+            }
+        }
+        data
+    }
+
+    fn generate_particle_uvs() -> Vec<f32> {
+        let mut data = vec![0.0f32; MAX_PARTICLES * 2];
+        for index in 0..MAX_PARTICLES {
+            let u = (index % TEXTURE_WIDTH) as f32 + 0.5;
+            let v = (index / TEXTURE_WIDTH) as f32 + 0.5;
+            data[index * 2] = u / TEXTURE_WIDTH as f32;
+            data[index * 2 + 1] = v / TEXTURE_HEIGHT as f32;
+        }
+        data
+    }
+
+    fn upload_texture(gl: &WebGl2RenderingContext, data: &[f32]) -> Result<WebGlTexture, JsValue> {
+        let texture = gl
+            .create_texture()
+            .ok_or_else(|| js_err("failed to create texture"))?;
+        gl.bind_texture(WebGl2RenderingContext::TEXTURE_2D, Some(&texture));
+        gl.tex_parameteri(
+            WebGl2RenderingContext::TEXTURE_2D,
+            WebGl2RenderingContext::TEXTURE_MIN_FILTER,
+            WebGl2RenderingContext::NEAREST as i32,
+        );
+        gl.tex_parameteri(
+            WebGl2RenderingContext::TEXTURE_2D,
+            WebGl2RenderingContext::TEXTURE_MAG_FILTER,
+            WebGl2RenderingContext::NEAREST as i32,
+        );
+        gl.tex_parameteri(
+            WebGl2RenderingContext::TEXTURE_2D,
+            WebGl2RenderingContext::TEXTURE_WRAP_S,
+            WebGl2RenderingContext::CLAMP_TO_EDGE as i32,
+        );
+        gl.tex_parameteri(
+            WebGl2RenderingContext::TEXTURE_2D,
+            WebGl2RenderingContext::TEXTURE_WRAP_T,
+            WebGl2RenderingContext::CLAMP_TO_EDGE as i32,
+        );
+        unsafe {
+            let view = Float32Array::view(data);
+            gl.tex_image_2d_with_i32_and_i32_and_i32_and_format_and_type_and_opt_array_buffer_view(
+                WebGl2RenderingContext::TEXTURE_2D,
+                0,
+                WebGl2RenderingContext::RGBA32F as i32,
+                TEXTURE_WIDTH as i32,
+                TEXTURE_HEIGHT as i32,
+                0,
+                WebGl2RenderingContext::RGBA,
+                WebGl2RenderingContext::FLOAT,
+                Some(&view),
+            )?;
+        }
+        Ok(texture)
+    }
+
+    fn rand(state: &mut u32) -> f32 {
+        *state = state.wrapping_mul(1664525).wrapping_add(1013904223);
+        let value = (*state >> 8) as f32;
+        value / ((u32::MAX >> 8) as f32)
+    }
+
+    fn rand_range(state: &mut u32, min: f32, max: f32) -> f32 {
+        min + (max - min) * Self::rand(state)
+    }
+
+    fn link_program(
+        gl: &WebGl2RenderingContext,
+        vertex_src: &str,
+        fragment_src: &str,
+    ) -> Result<WebGlProgram, JsValue> {
+        let vertex_shader =
+            Self::compile_shader(gl, WebGl2RenderingContext::VERTEX_SHADER, vertex_src)?;
+        let fragment_shader =
+            Self::compile_shader(gl, WebGl2RenderingContext::FRAGMENT_SHADER, fragment_src)?;
+        let program = gl
+            .create_program()
+            .ok_or_else(|| js_err("failed to create program"))?;
+        gl.attach_shader(&program, &vertex_shader);
+        gl.attach_shader(&program, &fragment_shader);
+        gl.link_program(&program);
+        if gl
+            .get_program_parameter(&program, WebGl2RenderingContext::LINK_STATUS)
+            .as_bool()
+            .unwrap_or(false)
+        {
+            gl.detach_shader(&program, &vertex_shader);
+            gl.detach_shader(&program, &fragment_shader);
+            gl.delete_shader(Some(&vertex_shader));
+            gl.delete_shader(Some(&fragment_shader));
+            Ok(program)
+        } else {
+            let info = gl
+                .get_program_info_log(&program)
+                .unwrap_or_else(|| "unknown program error".to_string());
+            Err(js_err(&format!("failed to link program: {}", info)))
+        }
+    }
+
+    fn compile_shader(
+        gl: &WebGl2RenderingContext,
+        shader_type: u32,
+        source: &str,
+    ) -> Result<WebGlShader, JsValue> {
+        let shader = gl
+            .create_shader(shader_type)
+            .ok_or_else(|| js_err("failed to create shader"))?;
+        gl.shader_source(&shader, source);
+        gl.compile_shader(&shader);
+        if gl
+            .get_shader_parameter(&shader, WebGl2RenderingContext::COMPILE_STATUS)
+            .as_bool()
+            .unwrap_or(false)
+        {
+            Ok(shader)
+        } else {
+            let info = gl
+                .get_shader_info_log(&shader)
+                .unwrap_or_else(|| "unknown shader error".to_string());
+            Err(js_err(&format!("failed to compile shader: {}", info)))
+        }
+    }
 }

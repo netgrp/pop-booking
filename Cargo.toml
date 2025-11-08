@@ -2,5 +2,6 @@
 
 members = [
     "backend",
+    "frontend/snow-wasm",
 ]
 resolver = "2"
