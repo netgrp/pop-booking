@@ -26,7 +26,7 @@ const THEMES = {
   DEFAULT: { label: "Default" },
   CHRISTMAS: { label: "Christmas" },
 };
-const DEFAULT_THEME = "DEFAULT";
+const DEFAULT_THEME = "CHRISTMAS";
 const THEME_CLASS_PREFIX = "theme-";
 let activeTheme = DEFAULT_THEME;
 
@@ -40,8 +40,9 @@ const SnowEffect = (() => {
   let animationFrame = null;
   let isActive = false;
   let listenersBound = false;
-  let snowTintColor = "rgba(255,255,255,0.95)";
+  let snowTintColor = "rgba(245,252,255,0.98)";
   let pointerWindTarget = 0;
+  let lastPointer = null;
   let wasmReadyPromise = null;
   let wasmExports = null;
   let pendingResize = null;
@@ -49,6 +50,8 @@ const SnowEffect = (() => {
   let fpsOverlayEl = null;
   let fpsVisible = false;
   let fpsDisplayValue = TARGET_FPS;
+  let pileCanvas = null;
+  let pileCtx = null;
 
   function ensureCanvas() {
     if (canvas) return true;
@@ -72,6 +75,10 @@ const SnowEffect = (() => {
     height = window.innerHeight;
     canvas.width = width;
     canvas.height = height;
+    if (pileCanvas) {
+      pileCanvas.width = width;
+      pileCanvas.height = height;
+    }
     if (wasmExports && typeof wasmExports.snow_resize === "function") {
       try {
         wasmExports.snow_resize(width, height);
@@ -87,6 +94,25 @@ const SnowEffect = (() => {
     if (!width) return;
     const ratio = (event.clientX / width) * 2 - 1;
     setPointerWind(ratio * 0.8);
+    sendPointerImpulse(event);
+  }
+
+  function sendPointerImpulse(event) {
+    if (!wasmExports || typeof wasmExports.snow_pointer_move !== "function") return;
+    const x = event.clientX;
+    const y = event.clientY;
+    if (!lastPointer) {
+      lastPointer = { x, y };
+      return;
+    }
+    const dx = x - lastPointer.x;
+    const dy = y - lastPointer.y;
+    lastPointer = { x, y };
+    try {
+      wasmExports.snow_pointer_move(x, y, dx, dy);
+    } catch (error) {
+      console.warn("Snow pointer move failed", error);
+    }
   }
 
   function setPointerWind(target) {
@@ -136,6 +162,23 @@ const SnowEffect = (() => {
     document.body.appendChild(fpsOverlayEl);
   }
 
+  function ensurePileCanvas() {
+    if (pileCanvas) return pileCanvas;
+    pileCanvas = document.createElement("canvas");
+    pileCanvas.id = "snow-pile-overlay";
+    pileCanvas.style.position = "fixed";
+    pileCanvas.style.left = "0";
+    pileCanvas.style.top = "0";
+    pileCanvas.style.pointerEvents = "none";
+    pileCanvas.style.zIndex = "5";
+    pileCanvas.style.mixBlendMode = "screen";
+    pileCanvas.width = width;
+    pileCanvas.height = height;
+    document.body.appendChild(pileCanvas);
+    pileCtx = pileCanvas.getContext("2d");
+    return pileCanvas;
+  }
+
   function toggleFpsOverlay() {
     ensureFpsOverlay();
     fpsVisible = !fpsVisible;
@@ -157,14 +200,50 @@ const SnowEffect = (() => {
     fpsOverlayEl.textContent = `${fpsDisplayValue.toFixed(1)} fps | active ${counts.active} | inactive ${counts.inactive}`;
   }
 
+  function renderPile() {
+    if (!pileCtx || !wasmExports || typeof wasmExports.snow_pile_bins !== "function") return;
+    let bins;
+    try {
+      bins = wasmExports.snow_pile_bins();
+    } catch (error) {
+      console.warn("Unable to read pile bins", error);
+      return;
+    }
+    if (!bins || typeof bins.length !== "number") return;
+
+    const ctx = pileCtx;
+    const w = pileCanvas.width;
+    const h = pileCanvas.height;
+    ctx.clearRect(0, 0, w, h);
+    const binCount = bins.length;
+    if (!binCount) return;
+
+    ctx.save();
+    ctx.filter = "blur(2px)";
+    ctx.fillStyle = "rgba(255, 255, 255, 0.88)";
+    ctx.beginPath();
+    ctx.moveTo(0, h);
+    for (let i = 0; i < binCount; i++) {
+      const x = (i / (binCount - 1)) * w;
+      const y = Math.max(0, h - bins[i]);
+      ctx.lineTo(x, y);
+    }
+    ctx.lineTo(w, h);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+  }
+
   function draw(timestamp = performance.now()) {
     if (!isActive || !wasmExports) return;
     if (!lastFrameTime) lastFrameTime = timestamp;
     const delta = Math.min(1000, timestamp - lastFrameTime);
     lastFrameTime = timestamp;
     try {
+      ensurePileCanvas();
       wasmExports.snow_step(delta);
       updateFpsOverlay(delta);
+      renderPile();
     } catch (error) {
       console.error("Snow step failed", error);
       stop();
@@ -180,6 +259,7 @@ const SnowEffect = (() => {
     document.body.classList.add("snow-active");
     lastFrameTime = 0;
     lastFrameTime = 0;
+    lastPointer = null;
     loadWasmModule()
       .then(() => {
         if (!isActive || !wasmExports) return;
@@ -209,6 +289,10 @@ const SnowEffect = (() => {
       animationFrame = null;
     }
     lastFrameTime = 0;
+    lastPointer = null;
+    if (pileCtx && pileCanvas) {
+      pileCtx.clearRect(0, 0, pileCanvas.width, pileCanvas.height);
+    }
     if (wasmExports && typeof wasmExports.snow_reset === "function") {
       try {
         wasmExports.snow_reset();
@@ -317,10 +401,10 @@ function setTheme(themeName) {
 function syncThemeEffects(themeName) {
   if (themeName === "CHRISTMAS") {
     SnowEffect.configure({
-      color: "rgba(233, 249, 255, 0.97)",
-      shadowColor: "rgba(56, 189, 248, 0.55)",
-      shadowBlur: 8,
-      pileColor: "rgba(216, 241, 255, 0.95)",
+      color: "rgba(245, 252, 255, 0.98)",
+      shadowColor: "rgba(220, 38, 38, 0.55)", // red glow
+      shadowBlur: 9,
+      pileColor: "rgba(234, 248, 234, 0.95)", // soft green-white
     });
     SnowEffect.start();
   } else {

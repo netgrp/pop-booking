@@ -15,6 +15,7 @@ pub const COMPUTE_FRAGMENT: &str = r#"#version 300 es
 precision highp float;
 
 uniform sampler2D u_source;
+uniform sampler2D u_velocity;
 uniform vec2 u_viewport;
 uniform vec2 u_textureSize;
 uniform float u_deltaMs;
@@ -42,6 +43,9 @@ void main() {
     float fall_speed = 24.0 + radius * 18.0;
 
     vec2 position = particle.xy;
+    vec2 fluid_uv = clamp(position / u_viewport, vec2(0.0), vec2(0.999));
+    vec2 flow = texture(u_velocity, fluid_uv).xy;
+    position += flow * dt;
     position.x += (sway + u_wind * 80.0) * dt;
     position.y += fall_speed * dt;
 
