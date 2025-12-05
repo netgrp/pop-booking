@@ -20,9 +20,11 @@ jobs:
           toolchain: stable
           default: true
           override: true
-          target: |
-            x86_64-unknown-linux-gnu
-            wasm32-unknown-unknown
+
+      - name: Install Rust WASM target
+        run: rustup target add wasm32-unknown-unknown
+      - name: Install wasm-bindgen-cli
+        run: cargo install -f wasm-bindgen-cli --version 0.2.104
 
       - name: Cache
         uses: Swatinem/rust-cache@v2
@@ -53,9 +55,11 @@ jobs:
           toolchain: stable
           default: true
           override: true
-          target: |
-            aarch64-unknown-linux-musl
-            wasm32-unknown-unknown
+
+      - name: Install Rust WASM target
+        run: rustup target add wasm32-unknown-unknown
+      - name: Install wasm-bindgen-cli
+        run: cargo install -f wasm-bindgen-cli --version 0.2.104
 
       - name: Cache
         uses: Swatinem/rust-cache@v2
