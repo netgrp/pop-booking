@@ -20,6 +20,9 @@ jobs:
           toolchain: stable
           default: true
           override: true
+          target: |
+            x86_64-unknown-linux-gnu
+            wasm32-unknown-unknown
 
       - name: Cache
         uses: Swatinem/rust-cache@v2
@@ -37,7 +40,7 @@ jobs:
         with:
           name: backend_amd64
           path: target/release/backend_amd64
-          
+
   build_arm64:
     name: arm64 build
     runs-on: ubuntu-latest
@@ -50,6 +53,9 @@ jobs:
           toolchain: stable
           default: true
           override: true
+          target: |
+            aarch64-unknown-linux-musl
+            wasm32-unknown-unknown
 
       - name: Cache
         uses: Swatinem/rust-cache@v2
@@ -105,19 +111,19 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           flavor: |
-              latest=true
+            latest=true
           tags: |
-              type=schedule,pattern={{date 'YYYYMMDD-HHmmss' tz='UTC'}}
-              type=ref,event=branch
-              type=ref,event=pr
-              type=semver,pattern={{major}}.{{minor}}.{{patch}}
-              type=semver,pattern={{version}}
-              type=semver,pattern={{major}}
-              type=sha
+            type=schedule,pattern={{date 'YYYYMMDD-HHmmss' tz='UTC'}}
+            type=ref,event=branch
+            type=ref,event=pr
+            type=semver,pattern={{major}}.{{minor}}.{{patch}}
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}
+            type=sha
 
       - name: Download all workflow run artifacts
         uses: actions/download-artifact@v4
-        
+
       - name: Build and push Docker image
         uses: docker/build-push-action@v5
         with:
