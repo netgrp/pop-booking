@@ -24,18 +24,23 @@ fn main() {
     );
     println!("cargo:rerun-if-env-changed=WASM_BINDGEN");
 
+    let pkg_dir = snow_crate.join("pkg");
+    let wasm = pkg_dir.join("snow_sim_bg.wasm");
+    let js = pkg_dir.join("snow_sim.js");
+
+    let force_build = env::var("FORCE_SNOW_WASM_BUILD").is_ok();
+    let prebuilt_available = wasm.is_file() && js.is_file();
+
+    if prebuilt_available && !force_build {
+        println!(
+            "cargo:warning=Using prebuilt snow_wasm artifacts in {}; set FORCE_SNOW_WASM_BUILD=1 to rebuild.",
+            pkg_dir.display()
+        );
+        return;
+    }
+
     let skip_wasm_build = env::var("CI").is_ok() || env::var("SKIP_SNOW_WASM_BUILD").is_ok();
-    if skip_wasm_build {
-        let pkg_dir = snow_crate.join("pkg");
-        let wasm = pkg_dir.join("snow_sim_bg.wasm");
-        let js = pkg_dir.join("snow_sim.js");
-        if wasm.is_file() && js.is_file() {
-            println!(
-                "cargo:warning=Skipping snow_wasm build; using prebuilt artifacts in {}",
-                pkg_dir.display()
-            );
-            return;
-        }
+    if skip_wasm_build && !force_build {
         panic!(
             "CI skip requested but prebuilt wasm bundle is missing (expected {} and {})",
             wasm.display(),
