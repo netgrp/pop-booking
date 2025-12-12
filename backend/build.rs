@@ -18,7 +18,27 @@ fn main() {
         snow_crate.join("Cargo.toml").display()
     );
     println!("cargo:rerun-if-changed={}", snow_src.display());
+    println!("cargo:rerun-if-changed={}", snow_crate.join("pkg").display());
     println!("cargo:rerun-if-env-changed=WASM_BINDGEN");
+
+    let skip_wasm_build = env::var("CI").is_ok() || env::var("SKIP_SNOW_WASM_BUILD").is_ok();
+    if skip_wasm_build {
+        let pkg_dir = snow_crate.join("pkg");
+        let wasm = pkg_dir.join("snow_sim_bg.wasm");
+        let js = pkg_dir.join("snow_sim.js");
+        if wasm.is_file() && js.is_file() {
+            println!(
+                "cargo:warning=Skipping snow_wasm build; using prebuilt artifacts in {}",
+                pkg_dir.display()
+            );
+            return;
+        }
+        panic!(
+            "CI skip requested but prebuilt wasm bundle is missing (expected {} and {})",
+            wasm.display(),
+            js.display()
+        );
+    }
 
     let cargo = env::var("CARGO").unwrap_or_else(|_| "cargo".to_string());
     let base_rustflags = env::var("RUSTFLAGS").unwrap_or_default();
