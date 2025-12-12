@@ -383,7 +383,7 @@ impl BookingApp {
         Ok(())
     }
 
-    pub async fn handle_new_booking(
+    pub fn handle_new_booking(
         &mut self,
         booking: NewBooking,
         user: &User,
@@ -417,7 +417,7 @@ impl BookingApp {
 
             if let Err(e) = self.check_available(None, &new_booking) {
                 for id in &created_ids {
-                    let _ = self.delete_booking(id).await;
+                    let _ = self.delete_booking(id);
                 }
                 return Err(e);
             }
@@ -427,9 +427,9 @@ impl BookingApp {
                 id = rand::random();
             }
 
-            if let Err(e) = self.add_booking(&id, new_booking).await {
+            if let Err(e) = self.add_booking(&id, new_booking) {
                 for prev_id in &created_ids {
-                    let _ = self.delete_booking(prev_id).await;
+                    let _ = self.delete_booking(prev_id);
                 }
                 return Err(e);
             }
@@ -439,7 +439,8 @@ impl BookingApp {
 
         Ok("Booking successful".to_string())
     }
-    pub async fn handle_delete(&mut self, payload: DeletePayload) -> Result<(), String> {
+
+    pub fn handle_delete(&mut self, payload: DeletePayload) -> Result<(), String> {
         let id = payload.id;
 
         if !self.db.read(|bookings| bookings.contains_key(&id)) {
@@ -456,7 +457,6 @@ impl BookingApp {
 
         self.db
             .update(|bookings| bookings.remove(&id))
-            .await
             .map_err(|e| format!("Error deleting booking: {}", e))?;
 
         Ok(())
@@ -471,18 +471,17 @@ impl BookingApp {
         })
     }
 
-    async fn add_booking(&mut self, id: &u32, booking: Booking) -> Result<(), String> {
+    fn add_booking(&mut self, id: &u32, booking: Booking) -> Result<(), String> {
         debug!("Adding booking: {:?}", booking);
         self.db
             .update(|bookings| {
                 bookings.insert(*id, booking);
             })
-            .await
             .map_err(|e| format!("Error adding booking: {}", e))?;
         Ok(())
     }
 
-    async fn delete_booking(&mut self, id: &u32) -> Result<(), String> {
+    fn delete_booking(&mut self, id: &u32) -> Result<(), String> {
         if !self.db.read(|bookings| bookings.contains_key(id)) {
             return Err("Booking does not exist".to_string());
         }
@@ -491,14 +490,10 @@ impl BookingApp {
             .update(|bookings| {
                 bookings.remove(id);
             })
-            .await
             .map_err(|e| format!("Error deleting booking: {}", e))
     }
 
-    pub async fn handle_change_booking(
-        &mut self,
-        change_booking: ChangeBooking,
-    ) -> Result<(), String> {
+    pub fn handle_change_booking(&mut self, change_booking: ChangeBooking) -> Result<(), String> {
         let id = change_booking.id;
 
         //check that booking exists
@@ -519,6 +514,6 @@ impl BookingApp {
 
         //update booking
         debug!("Updating booking");
-        self.add_booking(&id, booking).await
+        self.add_booking(&id, booking)
     }
 }

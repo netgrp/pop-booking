@@ -57,12 +57,7 @@ async fn handle_new_booking(
 
     debug!("User: {:?}", user);
 
-    match booker
-        .write()
-        .await
-        .handle_new_booking(payload, &user)
-        .await
-    {
+    match booker.write().await.handle_new_booking(payload, &user) {
         Ok(id) => Ok((StatusCode::OK, id)),
         Err(e) => {
             error!("Error creating new booking: {}", e);
@@ -97,7 +92,7 @@ async fn handle_change_booking(
         ));
     }
 
-    match booker.write().await.handle_change_booking(payload).await {
+    match booker.write().await.handle_change_booking(payload) {
         Ok(()) => Ok((StatusCode::OK, "Booking changed".to_string())),
         Err(e) => {
             error!("Error changing booking: {}", e);
@@ -132,7 +127,7 @@ async fn handle_delete(
         ));
     }
 
-    match booker.write().await.handle_delete(payload).await {
+    match booker.write().await.handle_delete(payload) {
         Ok(()) => Ok((StatusCode::OK, "Booking deleted".to_string())),
         Err(e) => {
             error!("Error deleting booking: {}", e);

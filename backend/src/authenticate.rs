@@ -197,7 +197,8 @@ impl AuthApp {
     }
 
     pub fn assert_login(&self, jar: CookieJar) -> Result<UserSession, String> {
-        let allow_all = std::env::var("ALLOW_ALL_LOGINS").ok().as_deref() == Some("1") || cfg!(debug_assertions);
+        let allow_all = std::env::var("ALLOW_ALL_LOGINS").ok().as_deref() == Some("1")
+            || cfg!(debug_assertions);
         if allow_all {
             // Accept any session, return a dummy user
             return Ok(UserSession {
@@ -229,7 +230,8 @@ impl AuthApp {
         password: &str,
     ) -> Result<(Cookie<'static>, UserSession), String> {
         // Allow all logins if running locally or in test mode
-        let allow_all = std::env::var("ALLOW_ALL_LOGINS").ok().as_deref() == Some("1") && cfg!(debug_assertions);
+        let allow_all = std::env::var("ALLOW_ALL_LOGINS").ok().as_deref() == Some("1")
+            && cfg!(debug_assertions);
         if allow_all {
             let token = TokenId::new();
             let session_token = UserSession {
@@ -239,7 +241,7 @@ impl AuthApp {
             self.tokens.insert(token, session_token.clone());
             return Ok((Self::gen_cookie(&token), session_token));
         }
-        
+
         let now = chrono::Utc::now();
         if let Some((timeout, _)) = self.timeouts.get(username) {
             if now < *timeout {

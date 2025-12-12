@@ -255,7 +255,7 @@ where
 
     /// Mutating access. Closure gets `&mut T`. The closure runs under write lock.
     /// Changes will be scheduled to be written asynchronously.
-    pub async fn update<R, F>(&self, f: F) -> anyhow::Result<R>
+    pub fn update<R, F>(&self, f: F) -> anyhow::Result<R>
     where
         F: FnOnce(&mut T) -> R,
     {

@@ -18,7 +18,10 @@ fn main() {
         snow_crate.join("Cargo.toml").display()
     );
     println!("cargo:rerun-if-changed={}", snow_src.display());
-    println!("cargo:rerun-if-changed={}", snow_crate.join("pkg").display());
+    println!(
+        "cargo:rerun-if-changed={}",
+        snow_crate.join("pkg").display()
+    );
     println!("cargo:rerun-if-env-changed=WASM_BINDGEN");
 
     let skip_wasm_build = env::var("CI").is_ok() || env::var("SKIP_SNOW_WASM_BUILD").is_ok();

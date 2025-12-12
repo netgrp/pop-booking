@@ -13,7 +13,10 @@ fn wasm_pkg_dir() -> PathBuf {
 
 fn wasm_and_js_paths() -> (PathBuf, PathBuf) {
     let pkg_dir = wasm_pkg_dir();
-    (pkg_dir.join("snow_sim_bg.wasm"), pkg_dir.join("snow_sim.js"))
+    (
+        pkg_dir.join("snow_sim_bg.wasm"),
+        pkg_dir.join("snow_sim.js"),
+    )
 }
 
 #[test]
