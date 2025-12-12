@@ -36,3 +36,6 @@ tempfile = "3.23.0"
 parking_lot = "0.12.5"
 fs2 = "0.4.3"
 futures = "0.3.31"
+
+[dev-dependencies]
+wasmparser = "0.215"
