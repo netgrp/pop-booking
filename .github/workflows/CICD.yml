@@ -21,11 +21,6 @@ jobs:
           default: true
           override: true
 
-      - name: Install Rust WASM target
-        run: rustup target add wasm32-unknown-unknown
-      - name: Install wasm-bindgen-cli
-        run: cargo install -f wasm-bindgen-cli --version 0.2.104
-
       - name: Cache
         uses: Swatinem/rust-cache@v2
 
@@ -33,7 +28,7 @@ jobs:
         uses: actions-rs/cargo@v1
         with:
           command: build
-          args: --all --release
+          args: -p backend --release
 
       - run: mv target/release/backend target/release/backend_amd64
 
@@ -56,13 +51,6 @@ jobs:
           default: true
           override: true
 
-      - name: Install Rust WASM target
-        run: rustup target add wasm32-unknown-unknown
-      - name: Install wasm-bindgen-cli
-        env:
-          RUSTFLAGS: "-C target-feature=-crt-static"
-        run: cargo install -f wasm-bindgen-cli --version 0.2.104
-
       - name: Cache
         uses: Swatinem/rust-cache@v2
 
@@ -73,7 +61,7 @@ jobs:
         with:
           use-cross: true
           command: build
-          args: --all --release --target=aarch64-unknown-linux-musl
+          args: -p backend --release --target=aarch64-unknown-linux-musl
 
       - run: mv target/aarch64-unknown-linux-musl/release/backend target/release/backend_arm64
 

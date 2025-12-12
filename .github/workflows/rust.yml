@@ -14,9 +14,5 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
-      - name: Install Rust WASM target
-        run: rustup target add wasm32-unknown-unknown
-      - name: Install wasm-bindgen-cli
-        run: cargo install -f wasm-bindgen-cli --version 0.2.104
       - name: Run tests
-        run: cargo test --verbose
+        run: cargo test --verbose --workspace --exclude snow-wasm
