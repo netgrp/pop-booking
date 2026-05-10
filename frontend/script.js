@@ -70,7 +70,75 @@ function switchPages(toPage) {
       calendarButton.setAttribute("class", "active");
       break;
   }
+  pushUrlState();
 }
+
+// ---- URL Routing (Desktop) ----
+// Syncs FullCalendar view/date and page tab to query parameters.
+// Parameters: ?view=month|timeGridWeek|timeGridDay  &date=YYYY-MM-DD  &page=calendar|notices
+
+let _urlSuppressPush = false; // flag to avoid pushing state when restoring from popstate
+
+function pushUrlState() {
+  if (_urlSuppressPush) return;
+  if (window.mobilecheck()) return; // mobile handles its own routing
+  const params = new URLSearchParams();
+  if (typeof calendar !== "undefined" && calendar) {
+    const view = calendar.view;
+    if (view) {
+      params.set("view", view.type);
+      const d = view.currentStart || view.activeStart;
+      if (d) {
+        const iso = d.getFullYear() + "-" +
+          String(d.getMonth() + 1).padStart(2, "0") + "-" +
+          String(d.getDate()).padStart(2, "0");
+        params.set("date", iso);
+      }
+    }
+  }
+  // page tab
+  const noticesDiv = document.getElementById("notices-div");
+  if (noticesDiv && !noticesDiv.hasAttribute("hidden")) {
+    params.set("page", "notices");
+  }
+  const qs = params.toString();
+  const url = qs ? "?" + qs : location.pathname;
+  const currentQs = location.search.replace(/^\?/, "");
+  if (currentQs !== qs) {
+    history.pushState(null, "", url);
+  }
+}
+
+function restoreUrlState() {
+  if (window.mobilecheck()) return;
+  const params = new URLSearchParams(location.search);
+  _urlSuppressPush = true;
+  try {
+    // Page tab
+    const page = params.get("page");
+    if (page === "notices" || page === "calendar") {
+      switchPages(page);
+    }
+    // Calendar view & date
+    if (typeof calendar !== "undefined" && calendar) {
+      const view = params.get("view");
+      const date = params.get("date");
+      if (view && date) {
+        calendar.changeView(view, date);
+      } else if (view) {
+        calendar.changeView(view);
+      } else if (date) {
+        calendar.gotoDate(date);
+      }
+    }
+  } finally {
+    _urlSuppressPush = false;
+  }
+}
+
+window.addEventListener("popstate", () => {
+  restoreUrlState();
+});
 
 async function logout() {
   let response = await fetch("/api/logout");
@@ -282,7 +350,15 @@ document.addEventListener("DOMContentLoaded", function () {
 
   var calendarEl = document.getElementById("calendar-div");
   calendar = new FullCalendar.Calendar(calendarEl, {
-    initialView: window.mobilecheck() ? "timeGridDay" : "month",
+    initialView: (function() {
+      const p = new URLSearchParams(location.search).get("view");
+      if (p && ["month", "timeGridWeek", "timeGridDay"].includes(p)) return p;
+      return window.mobilecheck() ? "timeGridDay" : "month";
+    })(),
+    initialDate: (function() {
+      const d = new URLSearchParams(location.search).get("date");
+      return d || undefined;
+    })(),
     events: loadEvents,
     height: "100%",
     selectable: true,
@@ -374,8 +450,25 @@ document.addEventListener("DOMContentLoaded", function () {
     },
     firstDay: 1,
     locale: "dk",
+    datesSet: function () { pushUrlState(); },
   });
+
+  // Restore page tab from URL before render
+  {
+    const page = new URLSearchParams(location.search).get("page");
+    if (page === "notices" || page === "calendar") {
+      _urlSuppressPush = true;
+      switchPages(page);
+      _urlSuppressPush = false;
+    }
+  }
+
   calendar.render();
+
+  // Replace the initial history entry with current state (so the first URL is correct)
+  _urlSuppressPush = true;
+  history.replaceState(null, "", location.search || location.pathname);
+  _urlSuppressPush = false;
 });
 
 

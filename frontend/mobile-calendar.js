@@ -142,10 +142,79 @@
   // ---- DOM Construction ----
   let rootEl, sheetEl, gridEl, newBookingEl;
 
+  // ---- URL Routing (Mobile) ----
+  // Parameters: ?date=YYYY-MM-DD  &newbooking=1
+
+  let _mobileUrlSuppressPush = false;
+
+  function pushMobileUrlState() {
+    if (_mobileUrlSuppressPush) return;
+    const params = new URLSearchParams();
+    if (selectedDate && selectedDate !== todayKey()) {
+      params.set("date", selectedDate);
+    }
+    if (newBookingOpen) {
+      params.set("newbooking", "1");
+    }
+    const qs = params.toString();
+    const url = qs ? "?" + qs : location.pathname;
+    const currentQs = location.search.replace(/^\?/, "");
+    if (currentQs !== qs) {
+      history.pushState(null, "", url);
+    }
+  }
+
+  function restoreMobileUrlState() {
+    _mobileUrlSuppressPush = true;
+    try {
+      const params = new URLSearchParams(location.search);
+      const date = params.get("date");
+      if (date && /^\d{4}-\d{2}-\d{2}$/.test(date)) {
+        selectedDate = date;
+        const d = new Date(date + "T12:00:00");
+        viewYear = d.getFullYear();
+        viewMonth = d.getMonth();
+      } else {
+        selectedDate = todayKey();
+        const today = new Date();
+        viewYear = today.getFullYear();
+        viewMonth = today.getMonth();
+      }
+
+      // Handle new booking screen
+      const nb = params.get("newbooking");
+      if (nb === "1" && !newBookingOpen) {
+        openNewBooking();
+      } else if (nb !== "1" && newBookingOpen) {
+        closeNewBooking();
+      }
+
+      render();
+      requestAnimationFrame(() => updateAgendaOverlayState());
+    } finally {
+      _mobileUrlSuppressPush = false;
+    }
+  }
+
+  window.addEventListener("popstate", () => {
+    if (!window.mobilecheck()) return;
+    restoreMobileUrlState();
+  });
+
   function init() {
-    const today = new Date();
-    viewYear = today.getFullYear();
-    viewMonth = today.getMonth();
+    // Read initial date from URL
+    const params = new URLSearchParams(location.search);
+    const urlDate = params.get("date");
+    if (urlDate && /^\d{4}-\d{2}-\d{2}$/.test(urlDate)) {
+      selectedDate = urlDate;
+      const d = new Date(urlDate + "T12:00:00");
+      viewYear = d.getFullYear();
+      viewMonth = d.getMonth();
+    } else {
+      const today = new Date();
+      viewYear = today.getFullYear();
+      viewMonth = today.getMonth();
+    }
 
     rootEl = document.createElement("div");
     rootEl.className = "mobile-cal";
@@ -160,6 +229,14 @@
     bindEvents();
     loadResourcesFromAPI(); // This will also trigger loadEventsFromAPI
     render();
+
+    // Open new booking screen if URL says so
+    if (params.get("newbooking") === "1") {
+      requestAnimationFrame(() => openNewBooking());
+    }
+
+    // Replace initial history entry
+    history.replaceState(null, "", location.search || location.pathname);
 
     // Set initial grid overlay position (no animation)
     requestAnimationFrame(() => {
@@ -514,6 +591,7 @@
       }
       render();
       updateAgendaOverlayState();
+      pushMobileUrlState();
     });
 
     // Agenda handle toggle
@@ -834,9 +912,8 @@
       renderGrid(); // update selected highlight
     }
     renderAgenda();
-  }
-
-  function setupAgendaSwipe() {
+    pushMobileUrlState();
+  }  function setupAgendaSwipe() {
     const scrollEl = document.getElementById("mc-agenda-scroll");
     let startX = 0;
     let startY = 0;
@@ -1109,6 +1186,7 @@
     newBookingOpen = true;
     newBookingEl.classList.add("active");
     renderNewBooking();
+    pushMobileUrlState();
   }
 
   function closeNewBooking() {
@@ -1118,6 +1196,7 @@
       mobileResourceSelect.destroy();
       mobileResourceSelect = null;
     }
+    pushMobileUrlState();
   }
 
   function submitNewBooking() {
