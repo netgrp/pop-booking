@@ -75,7 +75,9 @@ body {
   background-color: #fff;
 }
 
-input {
+/* Scoped to SweetAlert dialogs and the delete-booking dialog only */
+.swal2-popup input,
+#delete-booking-dialog input {
   border: none;
   box-shadow: 0px 0px 0px 1px rgba(0, 0, 0, 0.3);
   border-radius: 0.25rem;
@@ -91,18 +93,48 @@ input {
   text-decoration: none;
 }
 
-.select2-selection__choice {
-  background-color: #ededed;
-  box-shadow: 1pt 1pt 1pt 1pt #c9c9c9;
-  border: none !important;
-}
-
 .swal2-actions {
   z-index: 0;
 }
 
-.select2-container {
-  z-index: 9999;
+/* Allow the multi-select panel to overflow the SweetAlert popup */
+.swal2-html-container {
+  overflow: visible !important;
+}
+
+/* ---- Desktop SweetAlert booking form layout ---- */
+.swal-booking-form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  text-align: left;
+  padding: 4px 0;
+}
+
+.swal-form-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.swal-form-label {
+  flex-shrink: 0;
+  width: 70px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #374151;
+  padding-top: 12px;
+  text-align: right;
+}
+
+.swal-form-field {
+  flex: 1;
+  min-width: 0;
+}
+
+.swal-form-field input[type="datetime-local"] {
+  width: 100%;
+  box-sizing: border-box;
 }
 
 [hidden] {

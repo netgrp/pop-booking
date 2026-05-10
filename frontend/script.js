@@ -25,9 +25,9 @@ document.addEventListener('keydown', function (event) {
   if (event.key === 'Escape') {
     Swal.clickCancel();
   }
-  // Prevent Enter from confirming if Select2 dropdown is open
+  // Prevent Enter from confirming if MultiSelect dropdown is open
   if (event.key === "Enter") {
-    if (document.querySelector('.select2-container--open')) {
+    if (MultiSelect.isAnyOpen()) {
       return;
     }
     Swal.clickConfirm();
@@ -36,11 +36,11 @@ document.addEventListener('keydown', function (event) {
 }, true); //use capture so it triggers before bootstrap
 
 document.addEventListener('swiped-left', function (e) {
-  calendar.next();
+  if (typeof calendar !== "undefined" && calendar) calendar.next();
 });
 
 document.addEventListener('swiped-right', function (e) {
-  calendar.prev();
+  if (typeof calendar !== "undefined" && calendar) calendar.prev();
 });
 
 window.mobilecheck = function () {
@@ -183,11 +183,20 @@ function onResize(info) {
   Swal.fire({
     title: 'Reschedule Booking',
     html: `
-      <label for="start">New Start Time:</label>
-      <input type="datetime-local" id="start" name="start" value="${start}" required>
-      <br>
-      <label for="end">New End Time:</label>
-      <input type="datetime-local" id="end" name="end" value="${end}" required>
+      <div class="swal-booking-form">
+        <div class="swal-form-row">
+          <label class="swal-form-label" for="start">Start</label>
+          <div class="swal-form-field">
+            <input type="datetime-local" id="start" name="start" value="${start}" required>
+          </div>
+        </div>
+        <div class="swal-form-row">
+          <label class="swal-form-label" for="end">End</label>
+          <div class="swal-form-field">
+            <input type="datetime-local" id="end" name="end" value="${end}" required>
+          </div>
+        </div>
+      </div>
     `,
     showCancelButton: true,
     confirmButtonText: 'Reschedule',
@@ -228,6 +237,49 @@ function reschedule(start_str, end_str, id) {
 
 
 document.addEventListener("DOMContentLoaded", function () {
+  if (window.mobilecheck()) {
+    // Use custom mobile calendar UI
+    window.initMobileCalendar();
+
+    // Replace blocking SweetAlert toasts with lightweight inline toasts on mobile
+    (function () {
+      var ICON_SYMBOLS = { success: "✓", error: "✕", warning: "!", info: "i" };
+      var toastEl = null;
+      var hideTimer = null;
+
+      function ensureEl() {
+        if (toastEl) return;
+        toastEl = document.createElement("div");
+        toastEl.className = "mc-toast";
+        toastEl.innerHTML = '<div class="mc-toast-icon"></div><div class="mc-toast-text"></div>';
+        document.body.appendChild(toastEl);
+      }
+
+      Toast = {
+        fire: function (opts) {
+          // Support positional args: Toast.fire(title, text, icon)
+          if (typeof opts === "string") {
+            opts = { title: arguments[0], text: arguments[1], icon: arguments[2] };
+          }
+          ensureEl();
+          clearTimeout(hideTimer);
+          var icon = opts.icon || "info";
+          var iconEl = toastEl.querySelector(".mc-toast-icon");
+          var textEl = toastEl.querySelector(".mc-toast-text");
+          iconEl.className = "mc-toast-icon " + icon;
+          iconEl.textContent = ICON_SYMBOLS[icon] || "i";
+          textEl.textContent = opts.title + (opts.text ? " — " + opts.text : "");
+          toastEl.classList.add("visible");
+          hideTimer = setTimeout(function () {
+            toastEl.classList.remove("visible");
+          }, opts.timer || 3000);
+        }
+      };
+    })();
+
+    return;
+  }
+
   var calendarEl = document.getElementById("calendar-div");
   calendar = new FullCalendar.Calendar(calendarEl, {
     initialView: window.mobilecheck() ? "timeGridDay" : "month",
@@ -335,18 +387,30 @@ async function calendarSelect(info) {
 }
 
 async function bookingPopup(start, end) {
+  var popupResourceSelect = null;
   await Swal.fire({
-    title: 'Select Time',
+    title: 'New Booking',
     html: `
-    <label for="resources-dropdown">Select Resource:</label>
-    <select id="resources-dropdown" class="resources-dropdown" multiple="multiple">
-    </select>
-    <br>
-    <label for="start">Start Time:</label>
-    <input type="datetime-local" id="start" name="start" value="${start}" required>
-    <br>
-    <label for="end">End Time:</label>
-    <input type="datetime-local" id="end" name="end" value="${end}" required>
+    <div class="swal-booking-form">
+      <div class="swal-form-row">
+        <label class="swal-form-label">Resource</label>
+        <div class="swal-form-field">
+          <div id="resources-dropdown"></div>
+        </div>
+      </div>
+      <div class="swal-form-row">
+        <label class="swal-form-label" for="start">Start</label>
+        <div class="swal-form-field">
+          <input type="datetime-local" id="start" name="start" value="${start}" required>
+        </div>
+      </div>
+      <div class="swal-form-row">
+        <label class="swal-form-label" for="end">End</label>
+        <div class="swal-form-field">
+          <input type="datetime-local" id="end" name="end" value="${end}" required>
+        </div>
+      </div>
+    </div>
     `,
     showCancelButton: true,
     confirmButtonText: 'Confirm',
@@ -354,19 +418,24 @@ async function bookingPopup(start, end) {
     cancelButtonText: 'Cancel',
     focusConfirm: false,
     didOpen: async function () {
-      $('.resources-dropdown').select2({
-        dropdownParent: $('#swal2-html-container'),
+      var resData = await getResources(start, end);
+      var container = document.getElementById('resources-dropdown');
+      popupResourceSelect = new MultiSelect(container, {
         placeholder: "Select resources",
-        width: '200pt',
-        data: await getResources(start, end),
+        options: resData.map(function (r) { return { id: r.id, text: r.text }; }),
       });
     }
   }).then(async (result) => {
     if (result.isConfirmed) {
       let start = rfc3339(document.getElementById("start").value);
       let end = rfc3339(document.getElementById("end").value);
-      let resources = $('.resources-dropdown').select2('data').map((x) => x.id);
+      let resources = popupResourceSelect ? popupResourceSelect.getSelected().map(function (x) { return x.id; }) : [];
+      if (popupResourceSelect) popupResourceSelect.destroy();
+      popupResourceSelect = null;
       await newBooking(start, end, resources);
+    } else {
+      if (popupResourceSelect) popupResourceSelect.destroy();
+      popupResourceSelect = null;
     }
     calendar.unselect();
   });
@@ -413,23 +482,25 @@ function onSubmit(token) {
 
 function onSignIn(user) {
   if (logged_in == true) return;
-  document.getElementById("name-plate").innerHTML = "Room " + user.room;
-  document.getElementById("login").innerHTML = "Logout";
-  document.getElementById("login").onclick = logout;
   username = user.username;
   room = user.room;
   logged_in = true;
-  calendar.refetchEvents();
+  var namePlate = document.getElementById("name-plate");
+  var loginBtn = document.getElementById("login");
+  if (namePlate) namePlate.innerHTML = "Room " + user.room;
+  if (loginBtn) { loginBtn.innerHTML = "Logout"; loginBtn.onclick = logout; }
+  if (typeof calendar !== "undefined" && calendar) calendar.refetchEvents();
 }
 
 function onSignOut() {
   if (logged_in == false) return;
-  document.getElementById("name-plate").innerHTML = "";
-  document.getElementById("login").innerHTML = "Login";
-  document.getElementById("login").onclick = showLoginForm;
+  var namePlate = document.getElementById("name-plate");
+  var loginBtn = document.getElementById("login");
+  if (namePlate) namePlate.innerHTML = "";
+  if (loginBtn) { loginBtn.innerHTML = "Login"; loginBtn.onclick = showLoginForm; }
   logged_in = false;
   room = -1;
-  calendar.refetchEvents();
+  if (typeof calendar !== "undefined" && calendar) calendar.refetchEvents();
 }
 
 async function check_login() {
@@ -450,11 +521,20 @@ async function handle_event_click(info) {
     Swal.fire({
       titleText: info.event.title.split(" ").slice(1).join(" "),
       html: `
-        <label for="start">Start Time:</label>
-        <input type="datetime-local" id="start" name="start" value="${info.event.startStr.slice(0, -6)}" required>
-        <br>
-        <label for="end">End Time:</label>
-        <input type="datetime-local" id="end" name="end" value="${info.event.endStr.slice(0, -6)}" required>
+        <div class="swal-booking-form">
+          <div class="swal-form-row">
+            <label class="swal-form-label" for="start">Start</label>
+            <div class="swal-form-field">
+              <input type="datetime-local" id="start" name="start" value="${info.event.startStr.slice(0, -6)}" required>
+            </div>
+          </div>
+          <div class="swal-form-row">
+            <label class="swal-form-label" for="end">End</label>
+            <div class="swal-form-field">
+              <input type="datetime-local" id="end" name="end" value="${info.event.endStr.slice(0, -6)}" required>
+            </div>
+          </div>
+        </div>
       `,
       showCancelButton: true,
       confirmButtonText: 'Reschedule',
@@ -511,11 +591,20 @@ async function handle_event_click(info) {
     Swal.fire({
       title: info.event.title,
       html: `
-        <label for="start">Start Time:</label>
-        <input type="datetime-local" id="start" name="start" style="cursor: default;" value="${info.event.startStr.slice(0, -6)}" required disabled>
-        <br>
-        <label for="end">End Time:</label>
-        <input type="datetime-local" id="end" name="end" style="cursor: default;" value="${info.event.endStr.slice(0, -6)}" required disabled>
+        <div class="swal-booking-form">
+          <div class="swal-form-row">
+            <label class="swal-form-label" for="start">Start</label>
+            <div class="swal-form-field">
+              <input type="datetime-local" id="start" name="start" style="cursor: default;" value="${info.event.startStr.slice(0, -6)}" required disabled>
+            </div>
+          </div>
+          <div class="swal-form-row">
+            <label class="swal-form-label" for="end">End</label>
+            <div class="swal-form-field">
+              <input type="datetime-local" id="end" name="end" style="cursor: default;" value="${info.event.endStr.slice(0, -6)}" required disabled>
+            </div>
+          </div>
+        </div>
       `,
       showCancelButton: false,
       confirmButtonText: 'OK',
@@ -612,11 +701,3 @@ function rfc3339(d) {
     pad(d.getSeconds()) +
     timezoneOffset(d.getTimezoneOffset());
 }
-
-$(document).ready(function () {
-  $('.resources-dropdown').select2({
-    dropdownParent: $('#create-booking-dialog'),
-    placeholder: "Select resources",
-    width: 'resolve'
-  });
-});
