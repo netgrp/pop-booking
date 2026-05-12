@@ -190,6 +190,7 @@
       }
 
       render();
+      loadEventsFromAPI(); // refetch for potentially new month range
       requestAnimationFrame(() => updateAgendaOverlayState());
     } finally {
       _mobileUrlSuppressPush = false;
@@ -588,6 +589,7 @@
         const d = new Date(date + "T12:00:00");
         viewYear = d.getFullYear();
         viewMonth = d.getMonth();
+        loadEventsFromAPI(); // refetch for new month range
       }
       render();
       updateAgendaOverlayState();
@@ -775,6 +777,7 @@
           renderHeader();
           renderGrid();
           renderAgenda();
+          loadEventsFromAPI(); // refetch for new month range
         }
 
         removeTrack();
@@ -908,12 +911,15 @@
       viewYear = d.getFullYear();
       renderHeader();
       renderGrid();
+      loadEventsFromAPI(); // refetch for new month range
     } else {
       renderGrid(); // update selected highlight
     }
     renderAgenda();
     pushMobileUrlState();
-  }  function setupAgendaSwipe() {
+  }
+
+  function setupAgendaSwipe() {
     const scrollEl = document.getElementById("mc-agenda-scroll");
     let startX = 0;
     let startY = 0;
@@ -1235,7 +1241,14 @@
 
   // ---- API ----
   function loadEventsFromAPI() {
-    fetch("/api/book/events")
+    // Fetch events for the visible month range plus a buffer for grid overflow days
+    const rangeStart = new Date(viewYear, viewMonth - 1, 1);
+    const rangeEnd = new Date(viewYear, viewMonth + 2, 1);
+    const params = new URLSearchParams();
+    params.set("start", rangeStart.toISOString());
+    params.set("end", rangeEnd.toISOString());
+
+    fetch("/api/book/events?" + params.toString())
       .then(r => r.json())
       .then(data => {
         events = data.map(ev => {

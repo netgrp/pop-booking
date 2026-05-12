@@ -222,9 +222,13 @@ async function showLoginForm() {
   });
 }
 
-async function loadEvents(_, successCallback, failureCallback) {
+async function loadEvents(fetchInfo, successCallback, failureCallback) {
   try {
-    let response = await fetch("/api/book/events");
+    const params = new URLSearchParams();
+    if (fetchInfo && fetchInfo.start) params.set("start", fetchInfo.start.toISOString());
+    if (fetchInfo && fetchInfo.end) params.set("end", fetchInfo.end.toISOString());
+    const qs = params.toString();
+    let response = await fetch("/api/book/events" + (qs ? "?" + qs : ""));
     let events = await response.json();
 
     events = events.map((event) => {

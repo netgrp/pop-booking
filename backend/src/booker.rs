@@ -216,10 +216,27 @@ impl BookingApp {
     }
 
     // https://fullcalendar.io/docs/event-parsing
-    pub fn get_bookings(&self) -> Result<Vec<Event>, serde_json::Error> {
+    pub fn get_bookings(
+        &self,
+        range_start: Option<DateTime<Utc>>,
+        range_end: Option<DateTime<Utc>>,
+    ) -> Result<Vec<Event>, serde_json::Error> {
         let events = self.db.read(|bookings| {
             bookings
                 .iter()
+                .filter(|(_, booking)| {
+                    if let Some(start) = range_start {
+                        if booking.end_time <= start {
+                            return false;
+                        }
+                    }
+                    if let Some(end) = range_end {
+                        if booking.start_time >= end {
+                            return false;
+                        }
+                    }
+                    true
+                })
                 .map(|(&id, booking)| Event {
                     title: format!(
                         "Room {}, {}",

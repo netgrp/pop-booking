@@ -9,9 +9,11 @@ use aide::{
     redoc::Redoc,
 };
 use anyhow::Result;
+use schemars::JsonSchema;
+use serde::Deserialize;
 use axum::{
     debug_handler,
-    extract::{Request, State},
+    extract::{Query, Request, State},
     http::{HeaderMap, HeaderValue, StatusCode},
     middleware::{self, Next},
     response::Response,
@@ -153,8 +155,26 @@ async fn handle_resources(
     }
 }
 
-async fn handle_bookings(State(app): State<Arc<RwLock<BookingApp>>>) -> Json<Vec<booker::Event>> {
-    match app.read().await.get_bookings() {
+#[derive(Deserialize, JsonSchema)]
+struct EventsQuery {
+    start: Option<String>,
+    end: Option<String>,
+}
+
+async fn handle_bookings(
+    State(app): State<Arc<RwLock<BookingApp>>>,
+    Query(query): Query<EventsQuery>,
+) -> Json<Vec<booker::Event>> {
+    let range_start = query
+        .start
+        .and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok())
+        .map(|dt| dt.with_timezone(&chrono::Utc));
+    let range_end = query
+        .end
+        .and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok())
+        .map(|dt| dt.with_timezone(&chrono::Utc));
+
+    match app.read().await.get_bookings(range_start, range_end) {
         Ok(bookings) => Json(bookings),
         Err(e) => {
             error!("Error getting bookings: {}", e);
