@@ -9,7 +9,7 @@ function sendPostRequest(url, data) {
 }
 
 
-const Toast = Swal.mixin({
+var Toast = Swal.mixin({
   toast: true,
   position: "bottom-end",
   showConfirmButton: false,
@@ -36,11 +36,11 @@ document.addEventListener('keydown', function (event) {
 }, true); //use capture so it triggers before bootstrap
 
 document.addEventListener('swiped-left', function (e) {
-  if (typeof calendar !== "undefined" && calendar) calendar.next();
+  if (typeof calendar !== "undefined" && calendar && calendar.next) calendar.next();
 });
 
 document.addEventListener('swiped-right', function (e) {
-  if (typeof calendar !== "undefined" && calendar) calendar.prev();
+  if (typeof calendar !== "undefined" && calendar && calendar.prev) calendar.prev();
 });
 
 window.mobilecheck = function () {
@@ -586,7 +586,7 @@ function onSignIn(user) {
   var loginBtn = document.getElementById("login");
   if (namePlate) namePlate.innerHTML = "Room " + user.room;
   if (loginBtn) { loginBtn.innerHTML = "Logout"; loginBtn.onclick = logout; }
-  if (typeof calendar !== "undefined" && calendar) calendar.refetchEvents();
+  if (typeof calendar !== "undefined" && calendar && calendar.refetchEvents) calendar.refetchEvents();
 }
 
 function onSignOut() {
@@ -597,7 +597,7 @@ function onSignOut() {
   if (loginBtn) { loginBtn.innerHTML = "Login"; loginBtn.onclick = showLoginForm; }
   logged_in = false;
   room = -1;
-  if (typeof calendar !== "undefined" && calendar) calendar.refetchEvents();
+  if (typeof calendar !== "undefined" && calendar && calendar.refetchEvents) calendar.refetchEvents();
 }
 
 async function check_login() {

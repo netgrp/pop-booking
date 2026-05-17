@@ -173,27 +173,39 @@ body.is-mobile #delete-booking-dialog {
 .mc-grid-container {
   overflow: hidden;
   flex-shrink: 0;
+  touch-action: pan-y;
+  -webkit-user-select: none;
+  user-select: none;
+  contain: layout style;
 }
 
 .mc-grid-track {
   display: flex;
   will-change: transform;
+  contain: layout paint style;
+  backface-visibility: hidden;
+  transform: translateZ(0);
 }
 
 .mc-grid-track .mc-grid {
   flex-shrink: 0;
   box-sizing: border-box;
+  contain: layout paint style;
 }
 
 .mc-agenda-track {
   display: flex;
   will-change: transform;
+  contain: layout paint style;
+  backface-visibility: hidden;
+  transform: translateZ(0);
 }
 
 .mc-agenda-panel {
   flex-shrink: 0;
   box-sizing: border-box;
   overflow: hidden;
+  contain: layout paint style;
 }
 
 .mc-grid {
@@ -202,7 +214,7 @@ body.is-mobile #delete-booking-dialog {
   row-gap: 2px;
   padding: 0 12px;
   flex-shrink: 0;
-  will-change: transform, opacity;
+  contain: layout style;
 }
 
 .mc-day {
@@ -216,8 +228,8 @@ body.is-mobile #delete-booking-dialog {
   background: transparent;
   cursor: pointer;
   -webkit-tap-highlight-color: transparent;
-  transition: background 0.12s;
   padding: 0;
+  contain: layout style;
 }
 
 .mc-day:hover {
@@ -235,7 +247,6 @@ body.is-mobile #delete-booking-dialog {
   height: 32px;
   border-radius: 50%;
   font-size: 14px;
-  transition: all 0.15s;
 }
 
 .mc-day.muted .mc-day-num {
@@ -274,7 +285,8 @@ body.is-mobile #delete-booking-dialog {
   left: 0;
   right: 0;
   top: 0;
-  height: 100%;
+  height: calc(100dvh - 56px);
+  max-height: 100dvh;
   z-index: 20;
   background: #fafaf8;
   border-top: 1px solid #e5e5e5;
@@ -282,10 +294,14 @@ body.is-mobile #delete-booking-dialog {
   box-shadow: 0 -12px 40px rgba(0,0,0,0.10);
   padding: 6px 0 0;
   will-change: transform;
+  backface-visibility: hidden;
   touch-action: none;
+  overscroll-behavior: none;
   transform: translateY(100%);
   display: flex;
   flex-direction: column;
+  min-height: 0;
+  contain: layout style;
 }
 
 .mc-agenda-handle {
@@ -322,8 +338,12 @@ body.is-mobile #delete-booking-dialog {
 }
 
 .mc-agenda-scroll {
+  position: relative;
   flex: 1;
   overflow-y: auto;
+  overflow-x: hidden;
+  touch-action: pan-y;
+  overscroll-behavior: contain;
   -webkit-overflow-scrolling: touch;
   min-height: 0;
   padding: 0 0 40px;
@@ -331,6 +351,7 @@ body.is-mobile #delete-booking-dialog {
 
 .mc-agenda {
   padding: 0;
+  min-height: min-content;
 }
 
 .mc-agenda-hour {
@@ -410,7 +431,7 @@ body.is-mobile #delete-booking-dialog {
   box-shadow: none;
   cursor: pointer;
   -webkit-tap-highlight-color: transparent;
-  transition: transform 0.1s;
+  contain: layout style;
 }
 
 .mc-booking-card:active {
@@ -439,6 +460,30 @@ body.is-mobile #delete-booking-dialog {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.mc-booking-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 4px;
+}
+
+.mc-booking-pill {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 600;
+  color: #fff;
+  padding: 2px 8px;
+  border-radius: 10px;
+  white-space: nowrap;
+}
+
+.mc-detail-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
 }
 
 .mc-booking-time {
@@ -606,6 +651,270 @@ body.is-mobile #delete-booking-dialog {
   cursor: not-allowed;
 }
 
+/* ---- Booking Detail Sheet ---- */
+.mc-detail-sheet {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: flex-end;
+}
+
+.mc-detail-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.3);
+  opacity: 0;
+  transition: opacity 0.3s ease;
+}
+
+.mc-detail-panel {
+  position: relative;
+  width: 100%;
+  max-height: 85vh;
+  background: #fff;
+  border-radius: 24px 24px 0 0;
+  box-shadow: 0 -12px 40px rgba(0, 0, 0, 0.12);
+  padding: 0;
+  transform: translateY(100%);
+  transition: transform 0.35s cubic-bezier(0.32, 0.72, 0, 1);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.mc-detail-header {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 20px 24px 16px;
+}
+
+.mc-detail-color {
+  width: 6px;
+  min-height: 40px;
+  border-radius: 3px;
+  flex-shrink: 0;
+  align-self: stretch;
+}
+
+.mc-detail-title {
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  color: #0a0a0a;
+}
+
+.mc-detail-subtitle {
+  font-size: 14px;
+  color: #737373;
+  margin-top: 2px;
+}
+
+.mc-detail-body {
+  padding: 0 24px 8px;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.mc-detail-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 0;
+  font-size: 15px;
+  color: #374151;
+  border-bottom: 1px solid #f3f4f6;
+}
+
+.mc-detail-row:last-child {
+  border-bottom: none;
+}
+
+.mc-detail-icon {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+  color: #9ca3af;
+}
+
+.mc-detail-icon svg {
+  width: 18px;
+  height: 18px;
+  stroke: currentColor;
+  stroke-width: 2;
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.mc-detail-edit {
+  padding: 16px 0 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.mc-detail-edit-section {
+  display: flex;
+  flex-direction: column;
+}
+
+.mc-detail-edit-section .mc-nb-label {
+  margin-bottom: 6px;
+}
+
+.mc-detail-actions {
+  display: flex;
+  gap: 10px;
+  padding: 12px 24px;
+  padding-bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+  flex-shrink: 0;
+}
+
+.mc-detail-btn {
+  flex: 1;
+  padding: 14px 16px;
+  border-radius: 16px;
+  border: none;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.mc-detail-btn:active {
+  transform: scale(0.98);
+}
+
+.mc-detail-btn svg {
+  width: 16px;
+  height: 16px;
+  stroke: currentColor;
+  stroke-width: 2;
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.mc-detail-btn-close {
+  background: #f3f4f6;
+  color: #374151;
+}
+
+.mc-detail-btn-save {
+  background: #2563eb;
+  color: #fff;
+  box-shadow: 0 4px 12px rgba(37, 99, 235, 0.25);
+}
+
+.mc-detail-btn-delete {
+  background: #fef2f2;
+  color: #ef4444;
+  flex: 0.6;
+}
+
+.mc-detail-btn-delete-confirm {
+  background: #ef4444;
+  color: #fff;
+}
+
+/* ---- Mobile Login Popup ---- */
+.mc-login-overlay {
+  position: fixed;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 100%;
+  z-index: 10000;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+}
+
+.mc-login-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0,0,0,0.45);
+  opacity: 0;
+  transition: opacity 0.25s ease;
+}
+
+.mc-login-dialog {
+  position: relative;
+  width: 100%;
+  max-width: 340px;
+  background: #fff;
+  border-radius: 20px;
+  box-shadow: 0 24px 60px rgba(0,0,0,0.25);
+  opacity: 0;
+  transform: scale(0.95);
+  transition: opacity 0.25s ease, transform 0.25s ease;
+  overflow: hidden;
+}
+
+.mc-login-header {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 20px 24px 8px;
+}
+
+.mc-login-icon {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 14px;
+  background: #eff6ff;
+  color: #2563eb;
+  flex-shrink: 0;
+}
+
+.mc-login-icon svg {
+  width: 22px;
+  height: 22px;
+  stroke: currentColor;
+  stroke-width: 2;
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.mc-login-body {
+  padding: 16px 24px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.mc-login-field {
+  display: flex;
+  flex-direction: column;
+}
+
+.mc-login-field .mc-nb-label {
+  margin-bottom: 6px;
+}
+
+.mc-login-error {
+  font-size: 13px;
+  color: #ef4444;
+  min-height: 18px;
+}
+
+.mc-login-actions {
+  display: flex;
+  gap: 10px;
+  padding: 8px 24px 20px;
+}
+
 /* ---- Transitions ---- */
 .mc-screen {
   transition: opacity 0.2s, transform 0.2s;
@@ -672,3 +981,4 @@ body.is-mobile #delete-booking-dialog {
   flex: 1;
   min-width: 0;
 }
+

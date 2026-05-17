@@ -31,12 +31,53 @@
   let events = []; // from backend
   let resources = {}; // from backend {key: {name, disallowed_periods, ...}}
   let resourceColors = {}; // built from events: {resourceKey: color}
+  let eventsVersion = 0;
+  let eventsByDateCache = null;
+  const monthCache = new Map();
+  const gridHtmlCache = new Map();
+  const agendaHtmlCache = new Map();
   let newBookingOpen = false;
   let selectedResources = []; // for new booking form (multi-select)
   let mobileResourceSelect = null; // MultiSelect instance
 
   // ---- Helpers ----
   function pad(n) { return String(n).padStart(2, "0"); }
+
+  function translateX(el, x) {
+    el.style.transform = `translate3d(${x}px, 0, 0)`;
+  }
+
+  function translateY(el, y) {
+    el.style.transform = `translate3d(0, ${y}px, 0)`;
+  }
+
+  function positionAgendaOverlay(overlay, top) {
+    const viewportHeight = window.visualViewport?.height || window.innerHeight;
+    overlay.style.height = Math.max(120, viewportHeight - 56) + "px";
+    translateY(overlay, top);
+  }
+
+  function makeTransformScheduler(apply) {
+    let frame = 0;
+    let latest = 0;
+
+    function schedule(value) {
+      latest = value;
+      if (frame) return;
+      frame = requestAnimationFrame(() => {
+        frame = 0;
+        apply(latest);
+      });
+    }
+
+    schedule.cancel = function() {
+      if (!frame) return;
+      cancelAnimationFrame(frame);
+      frame = 0;
+    };
+
+    return schedule;
+  }
 
   function escapeHTML(s) {
     const div = document.createElement("div");
@@ -79,6 +120,9 @@
   }
 
   function buildMonth(year, month) {
+    const cacheKey = `${year}-${month}`;
+    if (monthCache.has(cacheKey)) return monthCache.get(cacheKey);
+
     const firstDay = new Date(year, month, 1);
     const daysInMonth = new Date(year, month + 1, 0).getDate();
     const prevMonthDays = new Date(year, month, 0).getDate();
@@ -96,12 +140,15 @@
       days.push({ day: next, date: dateKey(year, month + 1, next), muted: true });
       next++;
     }
+    monthCache.set(cacheKey, days);
     return days;
   }
 
   // Group events by date key (YYYY-MM-DD)
   // ev.start / ev.end are Date objects after loadEventsFromAPI
   function eventsByDate() {
+    if (eventsByDateCache) return eventsByDateCache;
+
     const map = {};
     for (const ev of events) {
       const s = ev.start instanceof Date ? ev.start : new Date(ev.start);
@@ -118,16 +165,24 @@
         d.setDate(d.getDate() + 1);
       }
     }
-    return map;
+    eventsByDateCache = map;
+    return eventsByDateCache;
   }
 
   function eventsForDate(dateStr) {
     const map = eventsByDate();
-    return (map[dateStr] || []).sort((a, b) => {
+    return (map[dateStr] || []).slice().sort((a, b) => {
       const sa = a.start instanceof Date ? a.start : new Date(a.start);
       const sb = b.start instanceof Date ? b.start : new Date(b.start);
       return sa - sb;
     });
+  }
+
+  function invalidateEventRenderCaches() {
+    eventsVersion++;
+    eventsByDateCache = null;
+    gridHtmlCache.clear();
+    agendaHtmlCache.clear();
   }
 
   function evStartISO(ev) {
@@ -141,6 +196,11 @@
 
   // ---- DOM Construction ----
   let rootEl, sheetEl, gridEl, newBookingEl;
+  // Cached DOM references (set once in init/bindEvents)
+  let _gridContainer, _gridTrack, _gridPrev, _gridCur, _gridNext;
+  let _agendaOverlay, _agendaScroll, _agendaEl, _agendaDate;
+  let _monthTitle, _nameBadge, _loginBtn;
+  let _adjacentPanelIdle = 0; // requestIdleCallback / setTimeout handle
 
   // ---- URL Routing (Mobile) ----
   // Parameters: ?date=YYYY-MM-DD  &newbooking=1
@@ -222,6 +282,20 @@
     rootEl.innerHTML = buildCalendarHTML();
     document.body.appendChild(rootEl);
 
+    // Cache DOM references
+    _gridContainer = document.getElementById("mc-grid-container");
+    _gridTrack = document.getElementById("mc-grid-track");
+    _gridPrev = document.getElementById("mc-grid-prev");
+    _gridCur = document.getElementById("mc-grid");
+    _gridNext = document.getElementById("mc-grid-next");
+    _agendaOverlay = document.getElementById("mc-agenda-overlay");
+    _agendaScroll = document.getElementById("mc-agenda-scroll");
+    _agendaEl = document.getElementById("mc-agenda");
+    _agendaDate = document.getElementById("mc-agenda-date");
+    _monthTitle = document.getElementById("mc-month-title");
+    _nameBadge = document.getElementById("mc-name-badge");
+    _loginBtn = document.getElementById("mc-login-btn");
+
     // New booking screen
     newBookingEl = document.createElement("div");
     newBookingEl.className = "mc-new-booking";
@@ -241,13 +315,11 @@
 
     // Set initial grid overlay position (no animation)
     requestAnimationFrame(() => {
-      const overlay = document.getElementById("mc-agenda-overlay");
-      const grid = document.getElementById("mc-grid-container");
-      const midTop = grid.getBoundingClientRect().bottom;
-      overlay.style.transform = `translateY(${midTop}px)`;
+      const midTop = _gridContainer.getBoundingClientRect().bottom;
+      positionAgendaOverlay(_agendaOverlay, midTop);
       // Enable transitions after initial position is painted
       requestAnimationFrame(() => {
-        overlay.style.transition = "transform 0.35s cubic-bezier(0.32, 0.72, 0, 1)";
+        _agendaOverlay.style.transition = "transform 0.35s cubic-bezier(0.32, 0.72, 0, 1)";
       });
     });
   }
@@ -267,7 +339,11 @@
         ${WEEKDAYS.map(d => `<span>${d}</span>`).join("")}
       </div>
       <div class="mc-grid-container" id="mc-grid-container">
-        <div class="mc-grid" id="mc-grid"></div>
+        <div class="mc-grid-track" id="mc-grid-track">
+          <div class="mc-grid" id="mc-grid-prev"></div>
+          <div class="mc-grid" id="mc-grid"></div>
+          <div class="mc-grid" id="mc-grid-next"></div>
+        </div>
       </div>
       <div class="mc-agenda-overlay" id="mc-agenda-overlay">
         <button class="mc-agenda-handle" id="mc-agenda-handle"></button>
@@ -282,6 +358,7 @@
           <div class="mc-agenda" id="mc-agenda"></div>
         </div>
       </div>
+
     `;
   }
 
@@ -293,71 +370,169 @@
   }
 
   function renderHeader() {
-    document.getElementById("mc-month-title").textContent = `${MONTH_NAMES[viewMonth]} ${viewYear}`;
+    _monthTitle.textContent = `${MONTH_NAMES[viewMonth]} ${viewYear}`;
   }
 
   function renderLoginState() {
-    const badge = document.getElementById("mc-name-badge");
-    const btn = document.getElementById("mc-login-btn");
     if (logged_in) {
-      badge.textContent = `Room ${room}`;
-      btn.innerHTML = `${ICONS.logout} Logout`;
+      _nameBadge.textContent = `Room ${room}`;
+      _loginBtn.innerHTML = `${ICONS.logout} Logout`;
     } else {
-      badge.textContent = "";
-      btn.innerHTML = `${ICONS.user} Login`;
+      _nameBadge.textContent = "";
+      _loginBtn.innerHTML = `${ICONS.user} Login`;
     }
   }
 
   function buildGridHTML(year, month) {
+    const cacheKey = `${eventsVersion}|${room}|${selectedDate}|${year}|${month}`;
+    if (gridHtmlCache.has(cacheKey)) return gridHtmlCache.get(cacheKey);
+
     const days = buildMonth(year, month);
     const byDate = eventsByDate();
     const todayStr = todayKey();
+    const parts = [];
 
-    return days.map(day => {
+    for (let i = 0; i < days.length; i++) {
+      const day = days[i];
       const isSelected = day.date === selectedDate;
       const isToday = day.date === todayStr;
-      const dayEvents = byDate[day.date] || [];
-      const dots = dayEvents.slice(0, 3);
+      const dayEvents = byDate[day.date];
 
       let cls = "mc-day";
       if (day.muted) cls += " muted";
       if (isSelected) cls += " selected";
       if (isToday) cls += " today";
 
-      return `
-        <button class="${cls}" data-date="${day.date}" data-muted="${day.muted}">
-          <span class="mc-day-num">${day.day}</span>
-          <span class="mc-dots">
-            ${dots.map(ev => `<i class="mc-dot" style="background:${ev.color || '#2563eb'}"></i>`).join("")}
-          </span>
-        </button>
-      `;
-    }).join("");
+      parts.push('<button class="', cls, '" data-date="', day.date, '" data-muted="', day.muted ? 'true' : 'false', '"><span class="mc-day-num">', String(day.day), '</span><span class="mc-dots">');
+
+      if (dayEvents) {
+        const n = dayEvents.length < 3 ? dayEvents.length : 3;
+        for (let j = 0; j < n; j++) {
+          parts.push('<i class="mc-dot" style="background:', dayEvents[j].color || '#2563eb', '"></i>');
+        }
+      }
+
+      parts.push('</span></button>');
+    }
+
+    const html = parts.join('');
+    gridHtmlCache.set(cacheKey, html);
+    return html;
+  }
+
+  function scheduleAdjacentPanels() {
+    // Cancel any pending idle render
+    if (_adjacentPanelIdle) {
+      (typeof cancelIdleCallback === 'function' ? cancelIdleCallback : clearTimeout)(_adjacentPanelIdle);
+      _adjacentPanelIdle = 0;
+    }
+    const prev = getAdjacentMonth(-1);
+    const next = getAdjacentMonth(1);
+    const doRender = () => {
+      _adjacentPanelIdle = 0;
+      _gridPrev.innerHTML = buildGridHTML(prev.year, prev.month);
+      _gridNext.innerHTML = buildGridHTML(next.year, next.month);
+    };
+    if (typeof requestIdleCallback === 'function') {
+      _adjacentPanelIdle = requestIdleCallback(doRender, { timeout: 200 });
+    } else {
+      _adjacentPanelIdle = setTimeout(doRender, 30);
+    }
+  }
+
+  function flushAdjacentPanels() {
+    if (!_adjacentPanelIdle) return;
+    (typeof cancelIdleCallback === 'function' ? cancelIdleCallback : clearTimeout)(_adjacentPanelIdle);
+    _adjacentPanelIdle = 0;
+    const prev = getAdjacentMonth(-1);
+    const next = getAdjacentMonth(1);
+    _gridPrev.innerHTML = buildGridHTML(prev.year, prev.month);
+    _gridNext.innerHTML = buildGridHTML(next.year, next.month);
   }
 
   function renderGrid() {
-    // Clean up any stale swipe tracks
-    finishPendingSwipe();
-    const container = document.getElementById("mc-grid-container");
-    container.querySelectorAll(".mc-grid-track").forEach(t => t.remove());
-    container.style.height = "";
-    container.style.transition = "";
+    const width = _gridContainer.offsetWidth;
 
-    gridEl = document.getElementById("mc-grid");
-    gridEl.style.display = "";
+    _gridContainer.style.height = "";
+    _gridContainer.style.transition = "";
+
+    for (const panel of _gridTrack.children) {
+      panel.style.width = width + "px";
+    }
+    _gridTrack.style.width = (width * 3) + "px";
+    _gridTrack.style.transition = "none";
+    translateX(_gridTrack, -width);
+
+    // Only render current month eagerly; adjacent panels on idle
+    gridEl = _gridCur;
     gridEl.innerHTML = buildGridHTML(viewYear, viewMonth);
+    scheduleAdjacentPanels();
+  }
+
+  // Optimized grid update after a swipe: rotate panels in the DOM instead of
+  // re-rendering all three. Only the one new panel (the direction we swiped
+  // towards) needs fresh innerHTML — the other two are already correct.
+  // Does NOT reset track position — caller handles that for animation continuity.
+  function rotateGridAfterSwipe(swipeDir) {
+    // swipeDir: +1 = swiped to next month, -1 = swiped to prev month
+    // Update model
+    viewMonth += swipeDir;
+    if (viewMonth > 11) { viewMonth = 0; viewYear++; }
+    if (viewMonth < 0) { viewMonth = 11; viewYear--; }
+
+    const width = _gridContainer.offsetWidth;
+
+    // Rotate DOM order: move trailing panel to the opposite end
+    if (swipeDir === 1) {
+      // Going forward: prev is no longer needed, move it to become the new next
+      _gridTrack.appendChild(_gridPrev);
+    } else {
+      // Going backward: next is no longer needed, move it to become the new prev
+      _gridTrack.insertBefore(_gridNext, _gridTrack.firstChild);
+    }
+
+    // Update cached references to match new DOM order
+    const panels = _gridTrack.children;
+    _gridPrev = panels[0];
+    _gridCur = panels[1];
+    _gridNext = panels[2];
+    gridEl = _gridCur;
+
+    // Update panel widths
+    for (const panel of panels) {
+      panel.style.width = width + "px";
+    }
+    _gridTrack.style.width = (width * 3) + "px";
+
+    // Only render the one new edge panel; current and opposite edge are reused
+    if (swipeDir === 1) {
+      const next = getAdjacentMonth(1);
+      _gridNext.innerHTML = buildGridHTML(next.year, next.month);
+    } else {
+      const prev = getAdjacentMonth(-1);
+      _gridPrev.innerHTML = buildGridHTML(prev.year, prev.month);
+    }
+
+    renderHeader();
+    renderAgenda();
+    loadEventsFromAPI();
   }
 
   function buildAgendaHTML(forDate) {
+    const cacheKey = `${eventsVersion}|${room}|${forDate}`;
+    if (agendaHtmlCache.has(cacheKey)) return agendaHtmlCache.get(cacheKey);
+
     const dayEvents = eventsForDate(forDate);
 
     if (dayEvents.length === 0) {
-      return `
+      const emptyHtml = `
         <div class="mc-empty">
           <div class="mc-empty-title">No bookings</div>
           <div class="mc-empty-sub">Tap + to create a booking for this day.</div>
         </div>
       `;
+      agendaHtmlCache.set(cacheKey, emptyHtml);
+      return emptyHtml;
     }
 
     const viewDate = new Date(forDate + "T00:00:00");
@@ -376,86 +551,122 @@
       return { ev, s, e, effectiveStart, effectiveEnd, isMultiDay, startedBefore, endsAfter, daysBefore, daysAfter };
     });
 
+    // Group events by owner + start + end time
+    function groupEvents(items) {
+      const groups = [];
+      const groupMap = new Map();
+      for (const m of items) {
+        const key = `${m.ev.owner}|${m.s.getTime()}|${m.e.getTime()}`;
+        if (groupMap.has(key)) {
+          groupMap.get(key).members.push(m);
+        } else {
+          const g = { key, members: [m], ...m };
+          groups.push(g);
+          groupMap.set(key, g);
+        }
+      }
+      return groups;
+    }
+
+    function renderCard(group, extraStyle, isMultiTime) {
+      const { members } = group;
+      const first = members[0];
+      const { ev, s, e, daysBefore, daysAfter } = first;
+      const owned = ev.owner == room;
+      const startISO = s.toISOString();
+      const endISO = e.toISOString();
+      const parts = ev.title.split(", ");
+      const roomLabel = parts.length > 1 ? parts[0] : "";
+
+      const eventIds = members.map(m => m.ev.id).join(",");
+      const titles = members.map(m => m.ev.title).join("|||");
+
+      // Always use pill layout
+      const pillsHtml = members.map(m => {
+        const p = m.ev.title.split(", ");
+        const name = p.length > 1 ? p.slice(1).join(", ") : m.ev.title;
+        return `<span class="mc-booking-pill" style="background:${m.ev.color || '#2563eb'}">${escapeHTML(name)}</span>`;
+      }).join('');
+
+      let timeHtml;
+      if (isMultiTime) {
+        const startIndicator = daysBefore > 0 ? `−${daysBefore}d` : '';
+        const endIndicator = daysAfter > 0 ? `+${daysAfter}d` : '';
+        timeHtml = `<div class="mc-booking-time mc-booking-time-multi">
+          <span class="mc-time-part">${formatTimeFromDate(s)}${startIndicator ? `<span class="mc-booking-day-indicator">${startIndicator}</span>` : ''}</span>
+          <span class="mc-time-sep">–</span>
+          <span class="mc-time-part">${formatTimeFromDate(e)}${endIndicator ? `<span class="mc-booking-day-indicator">${endIndicator}</span>` : ''}</span>
+        </div>`;
+      } else {
+        const endIndicator = daysAfter > 0 ? `+${daysAfter}d` : '';
+        timeHtml = `<div class="mc-booking-time">${formatTimeFromDate(s)} – ${formatTimeFromDate(e)}${endIndicator ? `<div class="mc-booking-day-indicator">${endIndicator}</div>` : ''}</div>`;
+      }
+
+      return `<div class="mc-booking-card${owned ? " owned" : ""}" style="border-left-color:${ev.color || '#2563eb'}${extraStyle ? '; ' + extraStyle : ''}" data-event-ids="${eventIds}" data-owned="${owned}" data-start="${startISO}" data-end="${endISO}" data-title="${escapeAttr(ev.title)}" data-titles="${escapeAttr(titles)}">
+        <div class="mc-booking-info">
+          <div class="mc-booking-title">${owned ? "You, " : ""}${escapeHTML(roomLabel)}</div>
+          <div class="mc-booking-pills">${pillsHtml}</div>
+        </div>
+        ${timeHtml}
+      </div>`;
+    }
+
     const continuationEvents = mapped.filter(m => m.startedBefore);
     const todayEvents = mapped.filter(m => !m.startedBefore);
 
     let html = '';
 
-    for (const { ev, s, e, isMultiDay, daysBefore, daysAfter } of continuationEvents) {
-      const startISO = s.toISOString();
-      const endISO = e.toISOString();
-      const parts = ev.title.split(", ");
-      const displayTitle = parts.length > 1 ? parts.slice(1).join(", ") : ev.title;
-      const roomLabel = parts.length > 1 ? parts[0] : "";
-      const owned = ev.owner == room;
-      const startIndicator = `−${daysBefore}d`;
-      const endIndicator = daysAfter > 0 ? `+${daysAfter}d` : '';
-
-      html += `
-        <div class="mc-booking-card${owned ? " owned" : ""}" style="border-left-color:${ev.color || '#2563eb'}; margin: 2px 12px 4px 18px;" data-event-id="${ev.id}" data-owned="${owned}" data-start="${startISO}" data-end="${endISO}" data-title="${escapeAttr(ev.title)}">
-          <div class="mc-booking-info">
-            <div class="mc-booking-title">${owned ? "You, " : ""}${escapeHTML(displayTitle)}</div>
-            <div class="mc-booking-resource">${escapeHTML(roomLabel)}</div>
-          </div>
-          <div class="mc-booking-time mc-booking-time-multi">
-            <span class="mc-time-part">${formatTimeFromDate(s)}<span class="mc-booking-day-indicator">${startIndicator}</span></span>
-            <span class="mc-time-sep">–</span>
-            <span class="mc-time-part">${formatTimeFromDate(e)}${endIndicator ? `<span class="mc-booking-day-indicator">${endIndicator}</span>` : ''}</span>
-          </div>
-        </div>
-      `;
+    // Continuation cards (started before today)
+    const contGroups = groupEvents(continuationEvents);
+    for (const group of contGroups) {
+      html += renderCard(group, 'margin: 2px 12px 4px 18px', true);
     }
 
+    // Build the set of hours that should show a tick mark:
+    // - The hour each event starts in
+    // - The hour immediately after each event's start hour (visual context)
+    const tickHours = new Set();
+    for (const { effectiveStart } of todayEvents) {
+      const startH = effectiveStart.getHours();
+      tickHours.add(startH);
+      tickHours.add(Math.min(23, startH + 1));
+    }
+
+    // Determine the full range so we iterate in order
     let minHour = 23, maxHour = 0;
-    for (const { effectiveStart, effectiveEnd } of todayEvents) {
-      minHour = Math.min(minHour, effectiveStart.getHours());
-      const endH = effectiveEnd.getHours() + (effectiveEnd.getMinutes() > 0 ? 1 : 0);
-      maxHour = Math.max(maxHour, endH);
-    }
-    if (todayEvents.length > 0) {
-      minHour = Math.max(0, minHour - 1);
-      maxHour = Math.min(24, maxHour + 1);
+    for (const h of tickHours) {
+      minHour = Math.min(minHour, h);
+      maxHour = Math.max(maxHour, h);
     }
 
-    for (let h = minHour; h < maxHour; h++) {
-      const hourLabel = formatTimeFromDate(new Date(1970, 0, 1, h, 0));
+    for (let h = minHour; h <= maxHour; h++) {
       const hourEvents = todayEvents.filter(m => m.effectiveStart.getHours() === h);
+      if (!tickHours.has(h)) continue;
 
+      const hourLabel = formatTimeFromDate(new Date(1970, 0, 1, h, 0));
       html += `<div class="mc-agenda-hour">`;
       html += `<div class="mc-agenda-tick"><span class="mc-agenda-tick-label">${hourLabel}</span><span class="mc-agenda-tick-line"></span></div>`;
 
-      for (const { ev, s, e, isMultiDay, daysAfter } of hourEvents) {
-        const startISO = s.toISOString();
-        const endISO = e.toISOString();
-        const parts = ev.title.split(", ");
-        const displayTitle = parts.length > 1 ? parts.slice(1).join(", ") : ev.title;
-        const roomLabel = parts.length > 1 ? parts[0] : "";
-        const owned = ev.owner == room;
-        const timeStr = `${formatTimeFromDate(s)} – ${formatTimeFromDate(e)}`;
-        const endIndicator = daysAfter > 0 ? `+${daysAfter}d` : '';
-
-        html += `
-          <div class="mc-booking-card${owned ? " owned" : ""}" style="border-left-color:${ev.color || '#2563eb'}" data-event-id="${ev.id}" data-owned="${owned}" data-start="${startISO}" data-end="${endISO}" data-title="${escapeAttr(ev.title)}">
-            <div class="mc-booking-info">
-              <div class="mc-booking-title">${owned ? "You, " : ""}${escapeHTML(displayTitle)}</div>
-              <div class="mc-booking-resource">${escapeHTML(roomLabel)}</div>
-            </div>
-            <div class="mc-booking-time">${timeStr}${endIndicator ? `<div class="mc-booking-day-indicator">${endIndicator}</div>` : ''}</div>
-          </div>
-        `;
+      const hourGroups = groupEvents(hourEvents);
+      for (const group of hourGroups) {
+        html += renderCard(group, '', false);
       }
 
       html += `</div>`;
     }
 
+    agendaHtmlCache.set(cacheKey, html);
     return html;
   }
 
   function renderAgenda() {
-    const dateEl = document.getElementById("mc-agenda-date");
-    const agendaEl = document.getElementById("mc-agenda");
-    dateEl.textContent = formatDateLabel(selectedDate);
-    agendaEl.innerHTML = buildAgendaHTML(selectedDate);
+    if (!preservingAgendaSwipeTrack) {
+      finishPendingAgendaSwipe(false);
+    }
+    _agendaDate.textContent = formatDateLabel(selectedDate);
+    if (deferAgendaBodyRender) return;
+    _agendaEl.innerHTML = buildAgendaHTML(selectedDate);
+    _agendaEl.style.visibility = "";
   }
 
   // ---- New Booking Screen ----
@@ -551,6 +762,14 @@
     return t >= s && t <= e;
   }
 
+  function getAdjacentMonth(dir) {
+    let m = viewMonth + dir;
+    let y = viewYear;
+    if (m > 11) { m = 0; y++; }
+    if (m < 0) { m = 11; y--; }
+    return { year: y, month: m };
+  }
+
   function buildSummary() {
     const startEl = document.getElementById("mc-nb-start");
     const endEl = document.getElementById("mc-nb-end");
@@ -578,7 +797,7 @@
   function bindEvents() {
     // Month navigation
     // Day clicks (delegated)
-    document.getElementById("mc-grid").addEventListener("click", (e) => {
+    _gridContainer.addEventListener("click", (e) => {
       const btn = e.target.closest(".mc-day");
       if (!btn) return;
       finishPendingSwipe();
@@ -612,12 +831,12 @@
     document.getElementById("mc-btn-new").addEventListener("click", openNewBooking);
 
     // Login button
-    document.getElementById("mc-login-btn").addEventListener("click", () => {
+    _loginBtn.addEventListener("click", () => {
       if (logged_in) {
         logout();
         setTimeout(() => renderLoginState(), 500);
       } else {
-        showLoginForm().then(() => {
+        showMobileLogin().then(() => {
           renderLoginState();
           loadEventsFromAPI();
         });
@@ -625,7 +844,7 @@
     });
 
     // Booking card clicks (delegated from agenda)
-    document.getElementById("mc-agenda").addEventListener("click", (e) => {
+    _agendaEl.addEventListener("click", (e) => {
       const card = e.target.closest(".mc-booking-card");
       if (!card) return;
       handleBookingClick(card);
@@ -636,121 +855,96 @@
   }
 
   let finishPendingSwipe = () => {};
+  let finishPendingAgendaSwipe = () => {};
+  let preservingAgendaSwipeTrack = false;
+  let deferAgendaBodyRender = false;
 
   function setupGridSwipe() {
-    const container = document.getElementById("mc-grid-container");
+    const container = _gridContainer;
+    const track = _gridTrack;
     let startX = 0;
+    let startY = 0;
     let currentX = 0;
+    let currentY = 0;
     let dragging = false;
+    let swiping = false;
+    let direction = null;
     let velocity = 0;
     let lastX = 0;
     let lastTime = 0;
-    let track = null;
     let containerW = 0;
-
-    function getAdjacentMonth(dir) {
-      let m = viewMonth + dir;
-      let y = viewYear;
-      if (m > 11) { m = 0; y++; }
-      if (m < 0) { m = 11; y--; }
-      return { year: y, month: m };
-    }
-
-    function createTrack() {
-      containerW = container.offsetWidth;
-      const prev = getAdjacentMonth(-1);
-      const next = getAdjacentMonth(1);
-
-      // Lock the container height to prevent size jumps during swipe
-      container.style.height = container.offsetHeight + "px";
-
-      track = document.createElement("div");
-      track.className = "mc-grid-track";
-      track.style.width = (containerW * 3) + "px";
-      track.style.transform = `translateX(${-containerW}px)`;
-
-      const prevGrid = document.createElement("div");
-      prevGrid.className = "mc-grid";
-      prevGrid.style.width = containerW + "px";
-      prevGrid.innerHTML = buildGridHTML(prev.year, prev.month);
-
-      const curGrid = document.createElement("div");
-      curGrid.className = "mc-grid";
-      curGrid.style.width = containerW + "px";
-      curGrid.innerHTML = buildGridHTML(viewYear, viewMonth);
-
-      const nextGrid = document.createElement("div");
-      nextGrid.className = "mc-grid";
-      nextGrid.style.width = containerW + "px";
-      nextGrid.innerHTML = buildGridHTML(next.year, next.month);
-
-      track.appendChild(prevGrid);
-      track.appendChild(curGrid);
-      track.appendChild(nextGrid);
-
-      // Hide the original grid, show track
-      const origGrid = document.getElementById("mc-grid");
-      origGrid.style.display = "none";
-      container.appendChild(track);
-    }
-
-    function removeTrack() {
-      if (track && track.parentNode) {
-        track.parentNode.removeChild(track);
-        track = null;
-      }
-      const origGrid = document.getElementById("mc-grid");
-      origGrid.style.display = "";
-    }
-
     let animating = false;
-    let pendingOnEnd = null;
+    const scheduleTrackX = makeTransformScheduler(x => {
+      translateX(track, x);
+    });
 
     finishPendingSwipe = function() {
-      if (animating && pendingOnEnd) {
-        pendingOnEnd();
-        pendingOnEnd = null;
+      if (animating) {
         animating = false;
+        track.style.transition = "none";
       }
     };
 
     container.addEventListener("touchstart", (e) => {
-      finishPendingSwipe();
+      // Stop any in-flight animation — state is already committed
+      if (animating) {
+        animating = false;
+        track.style.transition = "none";
+        // Track is mid-animation; snap to center since content is already correct
+        translateX(track, -container.offsetWidth);
+      }
+
+      // Ensure adjacent panels are rendered
+      flushAdjacentPanels();
 
       startX = e.touches[0].clientX;
+      startY = e.touches[0].clientY;
       lastX = startX;
       currentX = startX;
+      currentY = startY;
       lastTime = Date.now();
       velocity = 0;
       dragging = true;
-      track = null;
+      swiping = false;
+      direction = null;
+      containerW = container.offsetWidth;
     }, { passive: true });
 
     container.addEventListener("touchmove", (e) => {
       if (!dragging) return;
       currentX = e.touches[0].clientX;
+      currentY = e.touches[0].clientY;
+      const dx = currentX - startX;
+      const dy = currentY - startY;
+
+      if (!direction && (Math.abs(dx) > 8 || Math.abs(dy) > 8)) {
+        direction = Math.abs(dx) > Math.abs(dy) ? "horizontal" : "vertical";
+      }
+      if (direction === "vertical") return;
+      if (direction !== "horizontal") return;
+
+      e.preventDefault();
       const now = Date.now();
       const dt = now - lastTime;
       if (dt > 0) velocity = (currentX - lastX) / dt;
       lastX = currentX;
       lastTime = now;
 
-      // Create track on first real movement
-      if (!track && Math.abs(currentX - startX) > 5) {
-        createTrack();
+      if (!swiping) {
+        swiping = true;
         track.style.transition = "none";
       }
 
-      if (track) {
-        const dx = currentX - startX;
-        track.style.transform = `translateX(${-containerW + dx}px)`;
-      }
-    }, { passive: true });
+      scheduleTrackX(-containerW + dx);
+    }, { passive: false });
 
     container.addEventListener("touchend", () => {
       if (!dragging) return;
       dragging = false;
-      if (!track) return;
+      scheduleTrackX.cancel();
+      if (!swiping) return;
+      swiping = false;
+
       const dx = currentX - startX;
       const flingThreshold = 0.3;
 
@@ -758,147 +952,233 @@
       if (velocity > flingThreshold || dx > containerW * 0.25) swipeDir = -1;
       else if (velocity < -flingThreshold || dx < -containerW * 0.25) swipeDir = 1;
 
-      // Target position for the track
-      const targetX = -containerW + (-swipeDir * containerW);
+      if (swipeDir === 0) {
+        // Snap back to center
+        animating = true;
+        track.style.transition = "transform 0.35s cubic-bezier(0.32, 0.72, 0, 1)";
+        translateX(track, -containerW);
+        const onEnd = () => {
+          track.removeEventListener("transitionend", onEnd);
+          if (animating) {
+            animating = false;
+            track.style.transition = "none";
+          }
+        };
+        track.addEventListener("transitionend", onEnd);
+        setTimeout(onEnd, 400);
+        return;
+      }
 
-      track.style.transition = "transform 0.35s cubic-bezier(0.32, 0.72, 0, 1)";
-      track.style.transform = `translateX(${targetX}px)`;
+      // Commit the month change immediately.
+      // The visual offset before rotation: -containerW + dx
+      // After rotateGridAfterSwipe the panels shift by one slot:
+      //   swipeDir=+1 (forward): old panel indices shift -1, so visual offset += containerW
+      //   swipeDir=-1 (backward): old panel indices shift +1, so visual offset -= containerW
+      const preRotateX = -containerW + dx;
+      rotateGridAfterSwipe(swipeDir);
 
+      // Set track to the corrected position so it visually appears unchanged
+      const correctedX = preRotateX + (swipeDir * containerW);
+      track.style.transition = "none";
+      translateX(track, correctedX);
+
+      // Force the browser to commit the position before starting the animation
+      track.offsetWidth;
+
+      // Animate to center
       animating = true;
+      track.style.transition = "transform 0.35s cubic-bezier(0.32, 0.72, 0, 1)";
+      translateX(track, -containerW);
+
       const onEnd = () => {
         track.removeEventListener("transitionend", onEnd);
-        animating = false;
-        pendingOnEnd = null;
-
-        if (swipeDir !== 0) {
-          viewMonth += swipeDir;
-          if (viewMonth > 11) { viewMonth = 0; viewYear++; }
-          if (viewMonth < 0) { viewMonth = 11; viewYear--; }
-          renderHeader();
-          renderGrid();
-          renderAgenda();
-          loadEventsFromAPI(); // refetch for new month range
-        }
-
-        removeTrack();
-
-        // Calculate new natural height and animate container to it
-        const oldHeight = parseInt(container.style.height, 10);
-        const newHeight = container.scrollHeight;
-        if (oldHeight !== newHeight) {
-          container.style.transition = "height 0.3s cubic-bezier(0.32, 0.72, 0, 1)";
-          container.style.height = newHeight + "px";
-          const onHeightEnd = () => {
-            container.removeEventListener("transitionend", onHeightEnd);
-            container.style.transition = "";
-            container.style.height = "";
-          };
-          container.addEventListener("transitionend", onHeightEnd);
-
-          // Update overlay using the target position (container top + new height)
-          if (!sheetOpen) {
-            const overlay = document.getElementById("mc-agenda-overlay");
-            const containerTop = container.getBoundingClientRect().top;
-            const targetMidTop = containerTop + newHeight;
-            overlay.style.transition = "transform 0.3s cubic-bezier(0.32, 0.72, 0, 1)";
-            overlay.style.transform = `translateY(${targetMidTop}px)`;
-          }
-        } else {
-          container.style.height = "";
-          updateAgendaOverlayState();
+        if (animating) {
+          animating = false;
+          track.style.transition = "none";
         }
       };
-
-      pendingOnEnd = onEnd;
       track.addEventListener("transitionend", onEnd);
-      // Fallback in case transitionend doesn't fire
-      setTimeout(() => { if (pendingOnEnd === onEnd) onEnd(); }, 400);
+      setTimeout(onEnd, 400);
+
+      updateAgendaOverlayState();
+    });
+
+    container.addEventListener("touchcancel", () => {
+      dragging = false;
+      swiping = false;
+      direction = null;
+      scheduleTrackX.cancel();
+      track.style.transition = "none";
+      translateX(track, -containerW);
     });
   }
 
   function setupAgendaOverlayDrag() {
-    const overlay = document.getElementById("mc-agenda-overlay");
-    let startY = 0;
-    let startTop = 0;
-    let dragging = false;
-    let velocity = 0;
-    let lastY = 0;
-    let lastTime = 0;
+    const overlay = _agendaOverlay;
+    const grid = _gridContainer;
+    const weekdays = document.querySelector(".mc-weekdays");
 
     // Two snap positions:
     // fullTop: covers calendar, just below app header
     // midTop: just below the calendar grid (lowest it can go)
     const headerHeight = 56;
+    let dragBounds = null;
     const getFullTop = () => headerHeight;
     const getMidTop = () => {
-      const grid = document.getElementById("mc-grid-container");
-      const rect = grid.getBoundingClientRect();
+      const rect = _gridContainer.getBoundingClientRect();
       return rect.bottom;
     };
+    const getBounds = () => dragBounds || { fullTop: getFullTop(), midTop: getMidTop() };
 
     function getOverlayTop() {
       const transform = overlay.style.transform;
       if (transform) {
-        const match = transform.match(/translateY\((.+)px\)/);
+        const match = transform.match(/translateY\((.+)px\)/) || transform.match(/translate3d\(0px?,\s*(.+?)px,/);
         if (match) return parseFloat(match[1]);
       }
       return sheetOpen ? getFullTop() : getMidTop();
     }
 
-    function setOverlayTop(y) {
-      const clamped = Math.max(getFullTop(), Math.min(getMidTop(), y));
-      overlay.style.transform = `translateY(${clamped}px)`;
+    function getLiveOverlayTop() {
+      return overlay.getBoundingClientRect().top;
     }
 
-    overlay.addEventListener("touchstart", (e) => {
-      // Allow scrolling inside the agenda scroll area when content overflows
-      const scrollEl = document.getElementById("mc-agenda-scroll");
-      if (e.target.closest(".mc-agenda-scroll") && scrollEl.scrollTop > 0) return;
-      overlay.style.transition = "none";
-      startY = e.touches[0].clientY;
-      startTop = getOverlayTop();
-      lastY = startY;
-      lastTime = Date.now();
-      velocity = 0;
-      dragging = true;
-    }, { passive: true });
+    function clampOverlayTop(y) {
+      const bounds = getBounds();
+      return Math.max(bounds.fullTop, Math.min(bounds.midTop, y));
+    }
 
-    overlay.addEventListener("touchmove", (e) => {
-      if (!dragging) return;
-      const y = e.touches[0].clientY;
-      const now = Date.now();
-      const dt = now - lastTime;
-      if (dt > 0) velocity = (y - lastY) / dt;
-      lastY = y;
-      lastTime = now;
-      const newTop = startTop + (y - startY);
-      setOverlayTop(newTop);
-    }, { passive: true });
+    function setOverlayTop(y) {
+      const clamped = clampOverlayTop(y);
+      positionAgendaOverlay(overlay, clamped);
+      return clamped;
+    }
 
-    overlay.addEventListener("touchend", () => {
-      if (!dragging) return;
-      dragging = false;
+    const scheduleOverlayTop = makeTransformScheduler(setOverlayTop);
+
+    function snapSheet(velocity, currentTopOverride) {
       overlay.style.transition = "transform 0.35s cubic-bezier(0.32, 0.72, 0, 1)";
 
-      const currentTop = getOverlayTop();
-      const fullTop = getFullTop();
-      const midTop = getMidTop();
-      const midPoint = (fullTop + midTop) / 2;
+      const currentTop = currentTopOverride ?? getOverlayTop();
+      const bounds = getBounds();
+      const midPoint = (bounds.fullTop + bounds.midTop) / 2;
 
       const flingThreshold = 0.3;
       let snapTo;
 
       if (velocity < -flingThreshold) {
-        snapTo = fullTop;
+        snapTo = bounds.fullTop;
       } else if (velocity > flingThreshold) {
-        snapTo = midTop;
+        snapTo = bounds.midTop;
       } else {
-        snapTo = currentTop < midPoint ? fullTop : midTop;
+        snapTo = currentTop < midPoint ? bounds.fullTop : bounds.midTop;
       }
 
       setOverlayTop(snapTo);
-      sheetOpen = snapTo <= fullTop;
-    });
+      sheetOpen = snapTo <= bounds.fullTop;
+      dragBounds = null;
+    }
+
+    function bindSheetDrag(surface, options = {}) {
+      let startX = 0;
+      let startY = 0;
+      let startTop = 0;
+      let dragging = false;
+      let pendingDrag = false;
+      let direction = null;
+      let velocity = 0;
+      let lastY = 0;
+      let lastTime = 0;
+      let latestTop = 0;
+
+      surface.addEventListener("touchstart", (e) => {
+        scheduleOverlayTop.cancel();
+        dragBounds = { fullTop: getFullTop(), midTop: getMidTop() };
+        startX = e.touches[0].clientX;
+        startY = e.touches[0].clientY;
+        startTop = getLiveOverlayTop();
+        latestTop = startTop;
+        lastY = startY;
+        lastTime = Date.now();
+        velocity = 0;
+        dragging = false;
+        pendingDrag = true;
+        direction = null;
+      }, { passive: true });
+
+      surface.addEventListener("touchmove", (e) => {
+        if (!pendingDrag) return;
+        const x = e.touches[0].clientX;
+        const y = e.touches[0].clientY;
+        const dx = x - startX;
+        let dy = y - startY;
+
+        if (!direction && (Math.abs(dx) > 8 || Math.abs(dy) > 8)) {
+          direction = Math.abs(dy) >= Math.abs(dx) ? "vertical" : "horizontal";
+        }
+        if (direction === "horizontal") return;
+        if (direction !== "vertical") return;
+        if (!dragging && options.nativeDownRefresh && dy > 0) return;
+
+        const scrollEl = _agendaScroll;
+        if (!dragging && options.allowAgendaScroll && e.target.closest(".mc-agenda-scroll")) {
+          const maxScroll = scrollEl.scrollHeight - scrollEl.clientHeight;
+          const sheetAtTop = getLiveOverlayTop() <= getFullTop() + 2;
+          const canScrollUp = scrollEl.scrollTop > 0 && dy > 0;
+          const canScrollDown = scrollEl.scrollTop < maxScroll && dy < 0;
+          if (sheetAtTop && maxScroll > 1 && (canScrollUp || canScrollDown)) {
+            startY = y;
+            startTop = getLiveOverlayTop();
+            latestTop = startTop;
+            lastY = y;
+            lastTime = Date.now();
+            return;
+          }
+          if (!sheetAtTop || dy > 0) scrollEl.scrollTop = 0;
+        }
+
+        if (!dragging) {
+          dragging = true;
+          overlay.style.transition = "none";
+          startY = y;
+          startTop = getLiveOverlayTop();
+          latestTop = startTop;
+          lastY = y;
+          lastTime = Date.now();
+          setOverlayTop(startTop);
+          dy = 0;
+        }
+
+        e.preventDefault();
+        const now = Date.now();
+        const dt = now - lastTime;
+        if (dt > 0) velocity = (y - lastY) / dt;
+        lastY = y;
+        lastTime = now;
+        latestTop = clampOverlayTop(startTop + dy);
+        scheduleOverlayTop(startTop + dy);
+      }, { passive: false });
+
+      function finishDrag() {
+        if (!pendingDrag) return;
+        pendingDrag = false;
+        if (!dragging) {
+          dragBounds = null;
+          return;
+        }
+        dragging = false;
+        scheduleOverlayTop.cancel();
+        setOverlayTop(latestTop);
+        snapSheet(velocity, latestTop);
+      }
+
+      surface.addEventListener("touchend", finishDrag);
+      surface.addEventListener("touchcancel", finishDrag);
+    }
+
+    bindSheetDrag(overlay, { allowAgendaScroll: true });
+    bindSheetDrag(grid, { nativeDownRefresh: true });
+    if (weekdays) bindSheetDrag(weekdays, { nativeDownRefresh: true });
   }
 
   function changeDay(offset) {
@@ -920,7 +1200,7 @@
   }
 
   function setupAgendaSwipe() {
-    const scrollEl = document.getElementById("mc-agenda-scroll");
+    const scrollEl = _agendaScroll;
     let startX = 0;
     let startY = 0;
     let tracking = false;
@@ -930,8 +1210,10 @@
     let lastTime = 0;
     let track = null;
     let containerW = 0;
-    let agendaAnimating = false;
-    let agendaPendingOnEnd = null;
+    let agendaSwipeState = null;
+    const scheduleAgendaTrackX = makeTransformScheduler(x => {
+      if (track) translateX(track, x);
+    });
 
     function getAdjacentDate(offset) {
       const d = new Date(selectedDate + "T12:00:00");
@@ -940,14 +1222,22 @@
     }
 
     function createAgendaTrack() {
+      removeAgendaTrack();
       containerW = scrollEl.offsetWidth;
+      const scrollRect = scrollEl.getBoundingClientRect();
       const prevDate = getAdjacentDate(-1);
       const nextDate = getAdjacentDate(1);
 
       track = document.createElement("div");
       track.className = "mc-agenda-track";
       track.style.width = (containerW * 3) + "px";
-      track.style.transform = `translateX(${-containerW}px)`;
+      track.style.height = scrollRect.height + "px";
+      track.style.position = "fixed";
+      track.style.left = scrollRect.left + "px";
+      track.style.top = scrollRect.top + "px";
+      track.style.zIndex = "30";
+      track.style.overflow = "hidden";
+      translateX(track, -containerW);
 
       const prevPanel = document.createElement("div");
       prevPanel.className = "mc-agenda-panel";
@@ -969,30 +1259,85 @@
       track.appendChild(nextPanel);
 
       // Hide original agenda, show track
-      const origAgenda = document.getElementById("mc-agenda");
-      origAgenda.style.display = "none";
-      scrollEl.appendChild(track);
+      _agendaEl.style.display = "none";
+      rootEl.appendChild(track);
     }
 
     function removeAgendaTrack() {
-      if (track && track.parentNode) {
-        track.parentNode.removeChild(track);
-        track = null;
+      rootEl.querySelectorAll(".mc-agenda-track").forEach(t => t.remove());
+      track = null;
+      _agendaEl.style.display = "";
+      if (deferAgendaBodyRender) {
+        deferAgendaBodyRender = false;
+        renderAgenda();
       }
-      const origAgenda = document.getElementById("mc-agenda");
-      origAgenda.style.display = "";
     }
 
-    function finishPendingAgendaSwipe() {
-      if (agendaAnimating && agendaPendingOnEnd) {
-        agendaPendingOnEnd();
-        agendaPendingOnEnd = null;
-        agendaAnimating = false;
+    function clearAgendaSwipeState() {
+      if (!agendaSwipeState) return null;
+      const state = agendaSwipeState;
+      if (state.timer) clearTimeout(state.timer);
+      if (state.track && state.onEnd) {
+        state.track.removeEventListener("transitionend", state.onEnd);
       }
+      agendaSwipeState = null;
+      return state;
+    }
+
+    function completeAgendaSwipe(commit) {
+      const state = clearAgendaSwipeState();
+      const swipeDir = state ? state.swipeDir : 0;
+
+      tracking = false;
+      direction = null;
+      removeAgendaTrack();
+
+      if (commit && swipeDir !== 0) {
+        changeDay(swipeDir);
+      }
+    }
+
+    finishPendingAgendaSwipe = function(commit = false) {
+      completeAgendaSwipe(commit);
+    };
+
+    function cancelTracking() {
+      tracking = false;
+      direction = null;
+      completeAgendaSwipe(false);
+    }
+
+    function finishSuccessfulSwipeAnimation(swipeDir) {
+      const animatingTrack = track;
+      track = null;
+      _agendaEl.style.display = "";
+      _agendaEl.style.visibility = "hidden";
+      animatingTrack.style.pointerEvents = "none";
+
+      deferAgendaBodyRender = true;
+      preservingAgendaSwipeTrack = true;
+      try {
+        changeDay(swipeDir);
+      } finally {
+        preservingAgendaSwipeTrack = false;
+      }
+
+      const removeAnimatingTrack = () => {
+        animatingTrack.removeEventListener("transitionend", removeAnimatingTrack);
+        if (animatingTrack.parentNode) {
+          animatingTrack.parentNode.removeChild(animatingTrack);
+        }
+        if (!rootEl.querySelector(".mc-agenda-track") && deferAgendaBodyRender) {
+          deferAgendaBodyRender = false;
+          renderAgenda();
+        }
+      };
+      animatingTrack.addEventListener("transitionend", removeAnimatingTrack);
+      setTimeout(removeAnimatingTrack, 400);
     }
 
     scrollEl.addEventListener("touchstart", (e) => {
-      finishPendingAgendaSwipe();
+      finishPendingAgendaSwipe(true);
       startX = e.touches[0].clientX;
       startY = e.touches[0].clientY;
       lastX = startX;
@@ -1018,6 +1363,7 @@
       }
 
       if (direction === 'horizontal') {
+        e.preventDefault();
         const now = Date.now();
         const dt = now - lastTime;
         if (dt > 0) velocity = (x - lastX) / dt;
@@ -1028,13 +1374,14 @@
         if (!track) {
           createAgendaTrack();
           track.style.transition = "none";
+          translateX(track, -containerW + dx);
         }
 
         if (track) {
-          track.style.transform = `translateX(${-containerW + dx}px)`;
+          scheduleAgendaTrackX(-containerW + dx);
         }
       }
-    }, { passive: true });
+    }, { passive: false });
 
     scrollEl.addEventListener("touchend", () => {
       if (!tracking) return;
@@ -1051,43 +1398,175 @@
       const targetX = -containerW + (-swipeDir * containerW);
 
       track.style.transition = "transform 0.35s cubic-bezier(0.32, 0.72, 0, 1)";
-      track.style.transform = `translateX(${targetX}px)`;
+      translateX(track, targetX);
 
-      agendaAnimating = true;
+      if (swipeDir !== 0) {
+        finishSuccessfulSwipeAnimation(swipeDir);
+        return;
+      }
+
       const onEnd = () => {
-        track.removeEventListener("transitionend", onEnd);
-        agendaAnimating = false;
-        agendaPendingOnEnd = null;
-
-        if (swipeDir !== 0) {
-          changeDay(swipeDir);
-        }
-
-        removeAgendaTrack();
+        completeAgendaSwipe(false);
       };
 
-      agendaPendingOnEnd = onEnd;
+      agendaSwipeState = { track, swipeDir, onEnd, timer: null };
       track.addEventListener("transitionend", onEnd);
-      setTimeout(() => { if (agendaPendingOnEnd === onEnd) onEnd(); }, 400);
+      agendaSwipeState.timer = setTimeout(() => {
+        if (agendaSwipeState && agendaSwipeState.onEnd === onEnd) onEnd();
+      }, 400);
     });
+
+    scrollEl.addEventListener("touchcancel", cancelTracking);
   }
 
   function updateAgendaOverlayState() {
-    const overlay = document.getElementById("mc-agenda-overlay");
-    const grid = document.getElementById("mc-grid-container");
-    const rect = grid.getBoundingClientRect();
+    const rect = _gridContainer.getBoundingClientRect();
     const midTop = rect.bottom;
 
-    overlay.style.transition = "transform 0.35s cubic-bezier(0.32, 0.72, 0, 1)";
-    overlay.style.transform = `translateY(${sheetOpen ? 56 : midTop}px)`;
+    _agendaOverlay.style.transition = "transform 0.35s cubic-bezier(0.32, 0.72, 0, 1)";
+    positionAgendaOverlay(_agendaOverlay, sheetOpen ? 56 : midTop);
+  }
+
+  // ---- Mobile Login Popup ----
+  function showMobileLogin() {
+    return new Promise((resolve) => {
+      const overlay = document.createElement("div");
+      overlay.className = "mc-login-overlay";
+      overlay.innerHTML = `
+        <div class="mc-login-backdrop"></div>
+        <div class="mc-login-dialog">
+          <div class="mc-login-header">
+            <div class="mc-login-icon">${ICONS.user}</div>
+            <div class="mc-detail-title">Login</div>
+          </div>
+          <div class="mc-login-body">
+            <div class="mc-login-field">
+              <label class="mc-nb-label" for="mc-login-user">Username</label>
+              <input type="text" class="mc-nb-datetime" id="mc-login-user" placeholder="Username" autocomplete="username" autocapitalize="none">
+            </div>
+            <div class="mc-login-field">
+              <label class="mc-nb-label" for="mc-login-pass">Password</label>
+              <input type="password" class="mc-nb-datetime" id="mc-login-pass" placeholder="Password" autocomplete="current-password">
+            </div>
+            <div class="mc-login-error" id="mc-login-error"></div>
+          </div>
+          <div class="mc-login-actions">
+            <button class="mc-detail-btn mc-detail-btn-close" id="mc-login-cancel">Cancel</button>
+            <button class="mc-detail-btn mc-detail-btn-save" id="mc-login-submit">Login</button>
+          </div>
+        </div>
+      `;
+
+      document.body.appendChild(overlay);
+
+      const backdrop = overlay.querySelector(".mc-login-backdrop");
+      const dialog = overlay.querySelector(".mc-login-dialog");
+      const userInput = overlay.querySelector("#mc-login-user");
+      const passInput = overlay.querySelector("#mc-login-pass");
+      const errorEl = overlay.querySelector("#mc-login-error");
+      const submitBtn = overlay.querySelector("#mc-login-submit");
+
+      function repositionDialog() {
+        const vv = window.visualViewport;
+        if (vv) {
+          overlay.style.top = vv.offsetTop + "px";
+          overlay.style.height = vv.height + "px";
+        }
+      }
+
+      repositionDialog();
+      if (window.visualViewport) {
+        window.visualViewport.addEventListener("resize", repositionDialog);
+        window.visualViewport.addEventListener("scroll", repositionDialog);
+      }
+
+      requestAnimationFrame(() => {
+        backdrop.style.opacity = "1";
+        dialog.style.opacity = "1";
+        dialog.style.transform = "scale(1)";
+        setTimeout(() => userInput.focus(), 300);
+      });
+
+      function closeOverlay() {
+        if (window.visualViewport) {
+          window.visualViewport.removeEventListener("resize", repositionDialog);
+          window.visualViewport.removeEventListener("scroll", repositionDialog);
+        }
+        backdrop.style.opacity = "0";
+        dialog.style.opacity = "0";
+        dialog.style.transform = "scale(0.95)";
+        setTimeout(() => {
+          if (overlay.parentNode) overlay.remove();
+        }, 250);
+      }
+
+      backdrop.addEventListener("click", () => {
+        closeOverlay();
+        resolve(false);
+      });
+
+      overlay.querySelector("#mc-login-cancel").addEventListener("click", () => {
+        closeOverlay();
+        resolve(false);
+      });
+
+      async function doLogin() {
+        const user = userInput.value.trim();
+        const pass = passInput.value;
+        if (!user || !pass) {
+          errorEl.textContent = "Please enter username and password";
+          return;
+        }
+
+        submitBtn.disabled = true;
+        submitBtn.textContent = "Logging in…";
+        errorEl.textContent = "";
+
+        try {
+          const response = await sendPostRequest("/api/login", {
+            username: user,
+            password: pass,
+          });
+
+          if (response.status === 200) {
+            const data = await response.json();
+            onSignIn(data.user);
+            closeOverlay();
+            Toast.fire({ icon: "success", title: "Login successful" });
+            resolve(true);
+          } else {
+            const errorText = await response.text();
+            errorEl.textContent = errorText || "Login failed";
+            submitBtn.disabled = false;
+            submitBtn.textContent = "Login";
+          }
+        } catch (err) {
+          errorEl.textContent = "Something went wrong";
+          submitBtn.disabled = false;
+          submitBtn.textContent = "Login";
+        }
+      }
+
+      submitBtn.addEventListener("click", doLogin);
+
+      passInput.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") doLogin();
+      });
+      userInput.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") passInput.focus();
+      });
+    });
   }
 
   function handleBookingClick(card) {
-    const eventId = parseInt(card.dataset.eventId, 10);
+    const eventIds = (card.dataset.eventIds || card.dataset.eventId || '').split(',').map(id => parseInt(id, 10));
     const owned = card.dataset.owned === "true";
-    const title = card.dataset.title;
+    const titles = (card.dataset.titles || card.dataset.title || '').split('|||');
     const startStr = card.dataset.start;
     const endStr = card.dataset.end;
+
+    const startDate = new Date(startStr);
+    const endDate = new Date(endStr);
 
     // Convert ISO (UTC) to local datetime-local format
     function toLocalDTL(isoStr) {
@@ -1098,64 +1577,184 @@
     const startLocal = toLocalDTL(startStr);
     const endLocal = toLocalDTL(endStr);
 
-    if (owned && new Date(startStr) > new Date()) {
-      // Owner can reschedule/delete
-      let confirmed = false;
-      Swal.fire({
-        titleText: title.split(", ").slice(1).join(", ") || title,
-        html: `
-          <label for="start">Start Time:</label>
-          <input type="datetime-local" id="start" name="start" value="${startLocal}" required>
-          <br>
-          <label for="end">End Time:</label>
-          <input type="datetime-local" id="end" name="end" value="${endLocal}" required>
-        `,
-        showCancelButton: true,
-        confirmButtonText: "Reschedule",
-        confirmButtonColor: "#2563eb",
-        showDenyButton: true,
-        denyButtonText: "Delete",
-        denyButtonColor: "#ef4444",
-        preDeny: () => {
-          if (!confirmed) {
-            confirmed = true;
-            Swal.getDenyButton().textContent = "Are you sure?";
-            return false;
+    const firstTitle = titles[0] || '';
+    const parts = firstTitle.split(", ");
+    const roomLabel = parts.length > 1 ? parts[0] : "";
+    const isFuture = startDate > new Date();
+
+    const timeStr = `${formatTimeFromDate(startDate)} – ${formatTimeFromDate(endDate)}`;
+    const dateStr = formatDateLabel(startLocal.slice(0, 10));
+    const isMultiDay = startDate.toDateString() !== endDate.toDateString();
+    const dateRange = isMultiDay
+      ? `${formatShortDate(startLocal.slice(0, 10))} – ${formatShortDate(endLocal.slice(0, 10))}`
+      : dateStr;
+
+    // Build header — always use pills
+    const pillsHtml = eventIds.map((id, i) => {
+      const ev = events.find(e => e.id === id);
+      const t = titles[i] || '';
+      const p = t.split(", ");
+      const name = p.length > 1 ? p.slice(1).join(", ") : t;
+      const color = ev ? ev.color : '#2563eb';
+      return `<span class="mc-booking-pill" style="background:${color}">${escapeHTML(name)}</span>`;
+    }).join('');
+    const headerHtml = `
+      <div class="mc-detail-header">
+        <div>
+          <div class="mc-detail-title">${escapeHTML(roomLabel)}</div>
+          <div class="mc-detail-pills">${pillsHtml}</div>
+        </div>
+      </div>
+    `;
+
+    // Build bottom sheet
+    const sheet = document.createElement("div");
+    sheet.className = "mc-detail-sheet";
+    sheet.innerHTML = `
+      <div class="mc-detail-backdrop"></div>
+      <div class="mc-detail-panel">
+        ${headerHtml}
+        <div class="mc-detail-body">
+          <div class="mc-detail-row">
+            <span class="mc-detail-icon">${ICONS.calendar}</span>
+            <span>${dateRange}</span>
+          </div>
+          <div class="mc-detail-row">
+            <span class="mc-detail-icon">${ICONS.clock}</span>
+            <span>${timeStr}</span>
+          </div>
+          ${owned ? `<div class="mc-detail-row"><span class="mc-detail-icon">${ICONS.user}</span><span>Your booking</span></div>` : ''}
+          ${owned && isFuture ? `
+            <div class="mc-detail-edit" id="mc-detail-edit">
+              <div class="mc-detail-edit-section">
+                <label class="mc-nb-label" for="mc-detail-start">Start</label>
+                <input type="datetime-local" class="mc-nb-datetime" id="mc-detail-start" value="${startLocal}" step="300">
+              </div>
+              <div class="mc-detail-edit-section">
+                <label class="mc-nb-label" for="mc-detail-end">End</label>
+                <input type="datetime-local" class="mc-nb-datetime" id="mc-detail-end" value="${endLocal}" step="300">
+              </div>
+            </div>
+          ` : ''}
+        </div>
+        <div class="mc-detail-actions">
+          ${owned && isFuture ? `
+            <button class="mc-detail-btn mc-detail-btn-delete" id="mc-detail-delete">${ICONS.logout} Delete</button>
+            <button class="mc-detail-btn mc-detail-btn-save" id="mc-detail-save">Reschedule</button>
+          ` : `
+            <button class="mc-detail-btn mc-detail-btn-close" id="mc-detail-close">Close</button>
+          `}
+        </div>
+      </div>
+    `;
+
+    document.body.appendChild(sheet);
+
+    // Animate in
+    const backdrop = sheet.querySelector(".mc-detail-backdrop");
+    const panel = sheet.querySelector(".mc-detail-panel");
+    requestAnimationFrame(() => {
+      backdrop.style.opacity = "1";
+      panel.style.transform = "translateY(0)";
+    });
+
+    function closeSheet() {
+      backdrop.style.opacity = "0";
+      panel.style.transform = "translateY(100%)";
+      setTimeout(() => {
+        if (sheet.parentNode) sheet.remove();
+      }, 300);
+    }
+
+    // Close on backdrop tap
+    backdrop.addEventListener("click", closeSheet);
+
+    // Drag down to dismiss
+    {
+      let startY = 0;
+      let currentY = 0;
+      let dragging = false;
+      let panelStartY = 0;
+
+      panel.addEventListener("touchstart", (e) => {
+        startY = e.touches[0].clientY;
+        currentY = startY;
+        panelStartY = 0;
+        dragging = true;
+        panel.style.transition = "none";
+      }, { passive: true });
+
+      panel.addEventListener("touchmove", (e) => {
+        if (!dragging) return;
+        currentY = e.touches[0].clientY;
+        const dy = currentY - startY;
+        if (dy > 0) {
+          e.preventDefault();
+          panelStartY = dy;
+          panel.style.transform = `translateY(${dy}px)`;
+          backdrop.style.opacity = String(Math.max(0, 1 - dy / 300));
+        }
+      }, { passive: false });
+
+      panel.addEventListener("touchend", () => {
+        if (!dragging) return;
+        dragging = false;
+        panel.style.transition = "transform 0.35s cubic-bezier(0.32, 0.72, 0, 1)";
+        backdrop.style.transition = "opacity 0.3s ease";
+        if (panelStartY > 80) {
+          closeSheet();
+        } else {
+          panel.style.transform = "translateY(0)";
+          backdrop.style.opacity = "1";
+        }
+      });
+
+      panel.addEventListener("touchcancel", () => {
+        if (!dragging) return;
+        dragging = false;
+        panel.style.transition = "transform 0.35s cubic-bezier(0.32, 0.72, 0, 1)";
+        backdrop.style.transition = "opacity 0.3s ease";
+        panel.style.transform = "translateY(0)";
+        backdrop.style.opacity = "1";
+      });
+    }
+
+    if (owned && isFuture) {
+      let deleteConfirmed = false;
+      sheet.querySelector("#mc-detail-delete").addEventListener("click", (e) => {
+        if (!deleteConfirmed) {
+          deleteConfirmed = true;
+          e.currentTarget.innerHTML = `${ICONS.logout} Are you sure?`;
+          e.currentTarget.classList.add("mc-detail-btn-delete-confirm");
+          return;
+        }
+        // Delete all events in the group
+        Promise.all(eventIds.map(id =>
+          sendPostRequest("/api/book/secure/delete", { id })
+        )).then(responses => {
+          const allOk = responses.every(r => r.ok);
+          if (allOk) {
+            Toast.fire({ icon: "success", title: eventIds.length > 1 ? `${eventIds.length} bookings deleted` : "Booking deleted" });
+          } else {
+            Toast.fire({ icon: "error", title: "Some deletions failed" });
           }
-          return true;
+          loadEventsFromAPI();
+        });
+        closeSheet();
+      });
+
+      sheet.querySelector("#mc-detail-save").addEventListener("click", () => {
+        const start = rfc3339(sheet.querySelector("#mc-detail-start").value);
+        const end = rfc3339(sheet.querySelector("#mc-detail-end").value);
+        // Reschedule all events in the group
+        for (const id of eventIds) {
+          reschedule(start, end, id);
         }
-      }).then((result) => {
-        if (result.isConfirmed) {
-          const start = rfc3339(document.getElementById("start").value);
-          const end = rfc3339(document.getElementById("end").value);
-          reschedule(start, end, eventId);
-          setTimeout(() => loadEventsFromAPI(), 500);
-        } else if (result.isDenied) {
-          sendPostRequest("/api/book/secure/delete", { id: eventId }).then((response) => {
-            if (response.ok) {
-              Toast.fire({ icon: "success", title: "Booking deleted" });
-            } else {
-              response.text().then(t => Toast.fire({ icon: "error", title: "Delete failed", text: t }));
-            }
-            loadEventsFromAPI();
-          });
-        }
+        setTimeout(() => loadEventsFromAPI(), 500);
+        closeSheet();
       });
     } else {
-      // View only
-      Swal.fire({
-        title: title,
-        html: `
-          <label for="start">Start Time:</label>
-          <input type="datetime-local" id="start" style="cursor:default" value="${startLocal}" disabled>
-          <br>
-          <label for="end">End Time:</label>
-          <input type="datetime-local" id="end" style="cursor:default" value="${endLocal}" disabled>
-        `,
-        showCancelButton: false,
-        confirmButtonText: "OK",
-        confirmButtonColor: "#2563eb"
-      });
+      sheet.querySelector("#mc-detail-close").addEventListener("click", closeSheet);
     }
   }
 
@@ -1179,7 +1778,7 @@
 
   function openNewBooking() {
     if (!logged_in) {
-      showLoginForm().then((result) => {
+      showMobileLogin().then((result) => {
         renderLoginState();
         if (logged_in) {
           loadEventsFromAPI();
@@ -1256,6 +1855,7 @@
           ev.end = new Date(ev.end);
           return ev;
         });
+        invalidateEventRenderCaches();
         // Build resource color map from events
         // Event titles are "Room X, ResourceName" — match against resource names
         for (const ev of events) {

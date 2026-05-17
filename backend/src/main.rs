@@ -31,6 +31,7 @@ use backend::{
 use std::sync::Arc;
 use std::time::Duration;
 use std::{collections::HashMap, env};
+use std::path::PathBuf;
 use tokio::sync::RwLock;
 use tower_http::services::ServeDir;
 use tower_http::{
@@ -321,7 +322,17 @@ async fn main() -> Result<()> {
 
     dotenvy::dotenv().unwrap_or_default();
 
-    let frontend = ServeDir::new(env::var("FRONTEND_DIR")?);
+    let frontend_src_dir = PathBuf::from(env::var("FRONTEND_DIR")?);
+    let frontend_dir = if cfg!(debug_assertions) {
+        info!("Debug build: serving raw frontend files from {:?}", frontend_src_dir);
+        frontend_src_dir
+    } else {
+        let build_dir = frontend_src_dir.parent().unwrap_or(frontend_src_dir.as_path()).join("dist");
+        info!("Release build: building and serving minified frontend");
+        backend::frontend_build::build_frontend(&frontend_src_dir, &build_dir)?;
+        build_dir
+    };
+    let frontend = ServeDir::new(&frontend_dir);
 
     info!("Starting server");
 
