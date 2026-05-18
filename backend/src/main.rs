@@ -327,7 +327,9 @@ async fn main() -> Result<()> {
         info!("Debug build: serving raw frontend files from {:?}", frontend_src_dir);
         frontend_src_dir
     } else {
-        let build_dir = frontend_src_dir.parent().unwrap_or(frontend_src_dir.as_path()).join("dist");
+        let build_dir = env::var_os("FRONTEND_BUILD_DIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| env::temp_dir().join("pop-booking-dist"));
         info!("Release build: building and serving minified frontend");
         backend::frontend_build::build_frontend(&frontend_src_dir, &build_dir)?;
         build_dir

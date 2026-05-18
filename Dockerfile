@@ -5,6 +5,7 @@ COPY  /frontend /app/frontend
 COPY backend_${TARGETARCH} /app
 
 WORKDIR /app
+ENV FRONTEND_BUILD_DIR=/tmp/pop-booking-dist
 RUN chmod +x backend_${TARGETARCH}
 
 RUN echo "#!/bin/sh" > /app/start.sh
