@@ -712,7 +712,7 @@
     // Initialize MultiSelect dropdown for resources
     var resContainer = document.getElementById("mc-nb-resources");
     var resOptions = availableResources.map(function ([key, res]) {
-      return { id: key, text: res.name, color: resourceColors[key] || '#2563eb' };
+      return { id: key, text: res.name, color: resourceColors[key] || '#2563eb', depends_on: res.depends_on || null };
     });
     mobileResourceSelect = new MultiSelect(resContainer, {
       placeholder: "Select resources",

@@ -78,11 +78,26 @@
   };
 
   // ---- Get filtered, unselected options ----
+  // Items with depends_on are hidden unless their parent is selected
   MultiSelect.prototype._getFilteredOptions = function () {
     var self = this;
     var filter = this.searchValue.toLowerCase();
     return this.options.filter(function (opt) {
       if (self.selected.has(opt.id)) return false;
+      // Hide dependents whose parent is not selected
+      if (opt.depends_on && !self.selected.has(opt.depends_on)) return false;
+      return !filter || opt.text.toLowerCase().indexOf(filter) !== -1;
+    });
+  };
+
+  // ---- Get add-on options for currently selected parents ----
+  MultiSelect.prototype._getAddonOptions = function () {
+    var self = this;
+    var filter = this.searchValue.toLowerCase();
+    return this.options.filter(function (opt) {
+      if (self.selected.has(opt.id)) return false;
+      if (!opt.depends_on) return false;
+      if (!self.selected.has(opt.depends_on)) return false;
       return !filter || opt.text.toLowerCase().indexOf(filter) !== -1;
     });
   };
@@ -107,41 +122,80 @@
       return;
     }
 
-    filtered.forEach(function (opt, idx) {
-      var item = document.createElement("div");
-      item.className = "ms-option";
-      if (idx === self.highlightIndex) item.classList.add("highlighted");
-      item.setAttribute("role", "option");
-      item.setAttribute("data-id", opt.id);
-      item.setAttribute("data-index", idx);
-
-      var colorDot = "";
-      if (opt.color) {
-        colorDot = '<span class="ms-option-dot" style="background:' + opt.color + '"></span>';
+    // Separate add-ons from regular items for visual grouping
+    var addons = [];
+    var regular = [];
+    filtered.forEach(function (opt) {
+      if (opt.depends_on && self.selected.has(opt.depends_on)) {
+        addons.push(opt);
+      } else {
+        regular.push(opt);
       }
+    });
 
-      item.innerHTML = colorDot + '<span class="ms-option-text">' + self._escapeHTML(opt.text) + '</span>';
-
-      item.addEventListener("mousedown", function (e) {
-        e.preventDefault();
+    // Render add-on suggestions first if any
+    var globalIdx = 0;
+    if (addons.length > 0) {
+      addons.forEach(function (opt) {
+        self._renderOptionItem(opt, globalIdx);
+        globalIdx++;
       });
 
-      item.addEventListener("click", function (e) {
-        e.preventDefault();
-        e.stopPropagation();
-        self._selectOption(opt);
-      });
+      if (regular.length > 0) {
+        var sep = document.createElement("div");
+        sep.className = "ms-section-divider";
+        self.listEl.appendChild(sep);
+      }
+    }
 
-      // Hover sets highlight
-      item.addEventListener("mouseenter", function () {
-        self.highlightIndex = idx;
-        self._updateHighlight();
-      });
-
-      self.listEl.appendChild(item);
+    regular.forEach(function (opt) {
+      self._renderOptionItem(opt, globalIdx);
+      globalIdx++;
     });
 
     this._updateGhost();
+  };
+
+  // ---- Render a single option item ----
+  MultiSelect.prototype._renderOptionItem = function (opt, idx) {
+    var self = this;
+    var item = document.createElement("div");
+    item.className = "ms-option";
+    if (opt.depends_on) item.classList.add("ms-option-addon");
+    if (idx === self.highlightIndex) item.classList.add("highlighted");
+    item.setAttribute("role", "option");
+    item.setAttribute("data-id", opt.id);
+    item.setAttribute("data-index", idx);
+
+    var colorDot = "";
+    if (opt.color) {
+      colorDot = '<span class="ms-option-dot" style="background:' + opt.color + '"></span>';
+    }
+
+    var addonBadge = "";
+    if (opt.depends_on) {
+      addonBadge = '<span class="ms-addon-badge">add-on</span>';
+    }
+
+    item.innerHTML = colorDot + '<span class="ms-option-text">' + self._escapeHTML(opt.text) + '</span>' + addonBadge;
+
+    item.addEventListener("mousedown", function (e) {
+      e.preventDefault();
+    });
+
+    item.addEventListener("click", function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      self._selectOption(opt);
+    });
+
+    // Hover sets highlight
+    item.addEventListener("mouseenter", function () {
+      self.highlightIndex = idx;
+      self._updateHighlight();
+    });
+
+    self.listEl.appendChild(item);
   };
 
   // ---- Update ghost/prediction text ----
@@ -177,12 +231,35 @@
     this.onChange(this.getSelected());
     this.searchEl.focus();
 
+    // Check if there are add-ons available for the just-selected item
+    var addons = this._getAddonOptions();
+
     // Close panel if nothing left to select
     if (this._filteredOptions.length === 0) {
       this.close();
     } else {
       this._position();
+      // If add-ons just became available, ensure panel is open
+      if (addons.length > 0 && !this.isOpen) {
+        this.open();
+      }
     }
+  };
+
+  // ---- Deselect an option and any dependents ----
+  MultiSelect.prototype._deselectWithDependents = function (id) {
+    var self = this;
+    self.selected.delete(id);
+    // Remove any selected options that depend on the removed one
+    var toRemove = [];
+    self.options.forEach(function (opt) {
+      if (opt.depends_on === id && self.selected.has(opt.id)) {
+        toRemove.push(opt.id);
+      }
+    });
+    toRemove.forEach(function (depId) {
+      self._deselectWithDependents(depId); // recursive for chains
+    });
   };
 
   // ---- Update highlight without full re-render ----
@@ -240,7 +317,7 @@
         });
         chipX.addEventListener("click", function (e) {
           e.stopPropagation();
-          self.selected.delete(val.id);
+          self._deselectWithDependents(val.id);
           self._renderTrigger();
           self._renderOptions();
           self.onChange(self.getSelected());
@@ -353,7 +430,7 @@
         var lastKey = null;
         self.selected.forEach(function (val, id) { lastKey = id; });
         if (lastKey !== null) {
-          self.selected.delete(lastKey);
+          self._deselectWithDependents(lastKey);
           self._renderTrigger();
           self._renderOptions();
           self.onChange(self.getSelected());

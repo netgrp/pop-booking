@@ -93,27 +93,31 @@
     "description": "",
     "max_duration": "48:00",
     "color": "#fb7c7d",
-    "disallowed_periods": ["winter_season"]
+    "disallowed_periods": ["winter_season"],
+    "depends_on": "canoe1"
   },
   "extraseatcanoe2": {
     "name": "Extra Seat Canoe 2",
     "description": "",
     "max_duration": "48:00",
     "color": "#a9a291",
-    "disallowed_periods": ["winter_season"]
+    "disallowed_periods": ["winter_season"],
+    "depends_on": "canoe2"
   },
   "extraseatcanoe3": {
     "name": "Extra Seat Canoe 3",
     "description": "",
     "max_duration": "48:00",
     "color": "#852f00",
-    "disallowed_periods": ["winter_season"]
+    "disallowed_periods": ["winter_season"],
+    "depends_on": "canoe3"
   },
   "extraseatcanoe4": {
     "name": "Extra Seat Canoe 4",
     "description": "",
     "max_duration": "48:00",
     "color": "#8d2a51",
-    "disallowed_periods": ["winter_season"]
+    "disallowed_periods": ["winter_season"],
+    "depends_on": "canoe4"
   }
 }

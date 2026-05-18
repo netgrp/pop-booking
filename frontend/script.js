@@ -485,6 +485,7 @@ async function calendarSelect(info) {
 
 async function bookingPopup(start, end) {
   var popupResourceSelect = null;
+  var resData = await getResources(start, end);
   await Swal.fire({
     title: 'New Booking',
     html: `
@@ -514,12 +515,11 @@ async function bookingPopup(start, end) {
     confirmButtonColor: '#4BB543',
     cancelButtonText: 'Cancel',
     focusConfirm: false,
-    didOpen: async function () {
-      var resData = await getResources(start, end);
+    didOpen: function () {
       var container = document.getElementById('resources-dropdown');
       popupResourceSelect = new MultiSelect(container, {
         placeholder: "Select resources",
-        options: resData.map(function (r) { return { id: r.id, text: r.text }; }),
+        options: resData.map(function (r) { return { id: r.id, text: r.text, depends_on: r.depends_on }; }),
       });
     }
   }).then(async (result) => {
@@ -722,7 +722,6 @@ setInterval(async function () {
 async function getResources(start, end) {
   const response = await fetch('api/book/resources');
   const resources = await response.json();
-  // return a list of resource name strings
 
   let resourceNames = [];
   outer:
@@ -758,7 +757,7 @@ async function getResources(start, end) {
     }
 
 
-    resourceNames.push({ id: key, text: value.name });
+    resourceNames.push({ id: key, text: value.name, depends_on: value.depends_on || null });
   }
   return resourceNames;
 }

@@ -99,6 +99,7 @@ struct Resource {
     max_duration: u32, //in minutes
     color: String,
     disallowed_periods: Option<Vec<String>>,
+    depends_on: Option<String>,
 }
 
 fn minutes_from_str<'de, D>(deserializer: D) -> Result<u32, D::Error>
@@ -155,6 +156,7 @@ pub struct Event {
 pub struct BookableResource {
     name: String,
     disallowed_periods: Option<Vec<ResourcePeriod>>,
+    depends_on: Option<String>,
 }
 
 impl BookingApp {
@@ -208,6 +210,7 @@ impl BookingApp {
                                     .collect::<Result<Vec<ResourcePeriod>>>()
                             })
                             .transpose()?,
+                        depends_on: resource.depends_on.clone(),
                     },
                 ))
             })
@@ -423,6 +426,37 @@ impl BookingApp {
         let start_time = booking.start_time;
         let end_time = booking.end_time;
         let mut created_ids: Vec<u32> = Vec::new();
+
+        for resource_name in &booking.resource_names {
+            // Check depends_on constraint
+            if let Some(resource) = self.resources.get(resource_name.as_str()) {
+                if let Some(ref parent_id) = resource.depends_on {
+                    // Parent must be in the same booking request OR already booked by same user at same time
+                    let parent_in_request = booking.resource_names.contains(parent_id);
+                    if !parent_in_request {
+                        let parent_booked = self.db.read(|bookings| {
+                            bookings.values().any(|b| {
+                                b.resource_name == *parent_id
+                                    && b.user == *user
+                                    && b.start_time == start_time
+                                    && b.end_time == end_time
+                            })
+                        });
+                        if !parent_booked {
+                            let parent_name = self
+                                .resources
+                                .get(parent_id.as_str())
+                                .map(|r| r.name.as_str())
+                                .unwrap_or(parent_id.as_str());
+                            return Err(format!(
+                                "{} can only be booked together with {}",
+                                resource.name, parent_name
+                            ));
+                        }
+                    }
+                }
+            }
+        }
 
         for resource_name in booking.resource_names {
             let new_booking = Booking {
