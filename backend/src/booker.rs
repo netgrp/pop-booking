@@ -195,12 +195,6 @@ impl BookingApp {
 
         let bookings_path = format!("{bookings_dir}/bookings.json");
 
-        // Ensure bookings directory exists
-        if let Some(parent) = std::path::Path::new(&bookings_path).parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(|e| anyhow!("Failed to create bookings directory: {}", e))?;
-        }
-
         // Try to migrate from old format (raw HashMap<u32, Booking without group_id>)
         if let Ok(content) = std::fs::read_to_string(&bookings_path) {
             if !content.trim().is_empty() {
