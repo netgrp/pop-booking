@@ -189,38 +189,6 @@ where
                     }
                 };
 
-                // check external changes and reload if needed
-                if let Ok(meta) = std::fs::metadata(&path) {
-                    if let Ok(modified) = meta.modified() {
-                        let last = *last_modified.lock();
-                        if last.map(|t| t < modified).unwrap_or(true) {
-                            // external change detected. reload and merge: here we replace memory then continue.
-                            if let Ok(s) = std::fs::read_to_string(&path) {
-                                if let Ok(external) = serde_json::from_str::<T>(&s) {
-                                    let mut w = inner.write();
-                                    *w = external;
-                                    *last_modified.lock() = Some(modified);
-                                    // after reload, we must try write again with new snapshot
-                                    // compute new snapshot
-                                    if let Ok(j2) = serde_json::to_string_pretty(&*w) {
-                                        if opts.enable_wal {
-                                            let _ = std::fs::write(&wal_path, &j2);
-                                        }
-                                        let tmp = path.with_extension("tmp");
-                                        let _ = std::fs::write(&tmp, &j2);
-                                        let _ = std::fs::rename(&tmp, &path);
-                                        let _ = std::fs::remove_file(&wal_path);
-                                        *last_modified.lock() = std::fs::metadata(&path)
-                                            .and_then(|m| m.modified())
-                                            .ok();
-                                    }
-                                    continue;
-                                }
-                            }
-                        }
-                    }
-                }
-
                 // normal write
                 if opts.enable_wal {
                     let _ = std::fs::write(&wal_path, &json);
