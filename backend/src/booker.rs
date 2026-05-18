@@ -214,6 +214,12 @@ impl BookingApp {
                     {
                         info!("Migrating bookings database from v1 to v2 (adding group_id)");
 
+                        // Backup before migrating
+                        let backup_path = format!("{bookings_dir}/bookings.json.v1.bak");
+                        std::fs::write(&backup_path, &content)
+                            .map_err(|e| anyhow!("Failed to create backup before migration: {}", e))?;
+                        info!("Backup saved to {}", backup_path);
+
                         // Group bookings by (user, start_time, end_time)
                         let mut groups: HashMap<(User, DateTime<Utc>, DateTime<Utc>), u32> =
                             HashMap::new();
