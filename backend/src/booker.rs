@@ -505,10 +505,43 @@ impl BookingApp {
             return Err("Booking is in the past".to_string());
         }
 
+        // Find dependent bookings to cascade delete
+        let booking_info = self.db.read(|bookings| {
+            let b = &bookings[&id];
+            (b.resource_name.clone(), b.user.clone(), b.start_time, b.end_time)
+        });
+        let (resource_name, user, start_time, end_time) = booking_info;
+
+        // Find child resources that depend on this resource
+        let dependent_resource_ids: Vec<String> = self
+            .resources
+            .iter()
+            .filter(|(_, r)| r.depends_on.as_deref() == Some(resource_name.as_str()))
+            .map(|(id, _)| id.to_string())
+            .collect();
+
+        // Find and delete dependent bookings by same user at same time
+        let dependent_booking_ids: Vec<u32> = self.db.read(|bookings| {
+            bookings
+                .iter()
+                .filter(|(_, b)| {
+                    dependent_resource_ids.contains(&b.resource_name)
+                        && b.user == user
+                        && b.start_time == start_time
+                        && b.end_time == end_time
+                })
+                .map(|(id, _)| *id)
+                .collect()
+        });
+
         self.db
             .update(|bookings| bookings.remove(&id))
             .await
             .map_err(|e| format!("Error deleting booking: {}", e))?;
+
+        for dep_id in dependent_booking_ids {
+            let _ = self.db.update(|bookings| bookings.remove(&dep_id)).await;
+        }
 
         Ok(())
     }
