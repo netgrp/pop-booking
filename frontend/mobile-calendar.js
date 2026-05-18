@@ -556,7 +556,7 @@
       const groups = [];
       const groupMap = new Map();
       for (const m of items) {
-        const key = `${m.ev.owner}|${m.s.getTime()}|${m.e.getTime()}`;
+        const key = `${m.ev.group_id}`;
         if (groupMap.has(key)) {
           groupMap.get(key).members.push(m);
         } else {
@@ -1729,14 +1729,13 @@
           return;
         }
         // Delete all events in the group
-        Promise.all(eventIds.map(id =>
-          sendPostRequest("/api/book/secure/delete", { id })
-        )).then(responses => {
-          const allOk = responses.every(r => r.ok);
-          if (allOk) {
+        sendPostRequest("/api/book/secure/delete", { ids: eventIds }).then(response => {
+          if (response.ok) {
             Toast.fire({ icon: "success", title: eventIds.length > 1 ? `${eventIds.length} bookings deleted` : "Booking deleted" });
           } else {
-            Toast.fire({ icon: "error", title: "Some deletions failed" });
+            response.text().then(errorText => {
+              Toast.fire({ icon: "error", title: "Deletion failed: " + errorText });
+            });
           }
           loadEventsFromAPI();
         });
@@ -1747,10 +1746,20 @@
         const start = rfc3339(sheet.querySelector("#mc-detail-start").value);
         const end = rfc3339(sheet.querySelector("#mc-detail-end").value);
         // Reschedule all events in the group
-        for (const id of eventIds) {
-          reschedule(start, end, id);
-        }
-        setTimeout(() => loadEventsFromAPI(), 500);
+        sendPostRequest("/api/book/secure/change", {
+          ids: eventIds,
+          start_time: start,
+          end_time: end,
+        }).then(response => {
+          if (response.ok) {
+            Toast.fire({ icon: "success", title: "Booking updated" });
+          } else {
+            response.text().then(errorText => {
+              Toast.fire({ icon: "error", title: "Reschedule failed: " + errorText });
+            });
+          }
+          loadEventsFromAPI();
+        });
         closeSheet();
       });
     } else {

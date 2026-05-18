@@ -30,7 +30,7 @@ where
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct ChangeBooking {
-    pub id: u32,
+    pub ids: Vec<u32>,
     #[serde(deserialize_with = "parse_rfc3339")]
     pub start_time: DateTime<Utc>,
     #[serde(deserialize_with = "parse_rfc3339")]
@@ -39,8 +39,10 @@ pub struct ChangeBooking {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct DeletePayload {
-    pub id: u32,
+    pub ids: Vec<u32>,
 }
+
+
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct User {
@@ -132,11 +134,26 @@ struct Booking {
     resource_name: String,
     start_time: DateTime<Utc>,
     end_time: DateTime<Utc>,
+    group_id: u32,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct BookingsDb {
+    version: u32,
+    bookings: HashMap<u32, Booking>,
+}
+
+impl Default for BookingsDb {
+    fn default() -> Self {
+        Self {
+            version: 2,
+            bookings: HashMap::new(),
+        }
+    }
 }
 
 pub struct BookingApp {
-    // bookings: HashMap<u32, Booking>,
-    db: JsonDb<HashMap<u32, Booking>>,
+    db: JsonDb<BookingsDb>,
     resources: HashMap<String, Resource>,
     resource_periods: HashMap<String, ResourcePeriod>,
 }
@@ -146,6 +163,7 @@ pub struct BookingApp {
 pub struct Event {
     title: String,
     id: u32,
+    group_id: u32,
     start: String,
     end: String,
     owner: u16,
@@ -176,7 +194,67 @@ impl BookingApp {
             serde_json::from_str(&resource_periods_content)?;
 
         let bookings_path = format!("{bookings_dir}/bookings.json");
-        let db = JsonDb::open(bookings_path)
+
+        // Ensure bookings directory exists
+        if let Some(parent) = std::path::Path::new(&bookings_path).parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| anyhow!("Failed to create bookings directory: {}", e))?;
+        }
+
+        // Try to migrate from old format (raw HashMap<u32, Booking without group_id>)
+        if let Ok(content) = std::fs::read_to_string(&bookings_path) {
+            if !content.trim().is_empty() {
+                // Try parsing as new format first
+                if serde_json::from_str::<BookingsDb>(&content).is_err() {
+                    // Try parsing as old format (HashMap with bookings missing group_id)
+                    #[derive(Deserialize)]
+                    struct OldBooking {
+                        user: User,
+                        resource_name: String,
+                        start_time: DateTime<Utc>,
+                        end_time: DateTime<Utc>,
+                    }
+
+                    if let Ok(old_bookings) =
+                        serde_json::from_str::<HashMap<u32, OldBooking>>(&content)
+                    {
+                        info!("Migrating bookings database from v1 to v2 (adding group_id)");
+
+                        // Group bookings by (user, start_time, end_time)
+                        let mut groups: HashMap<(User, DateTime<Utc>, DateTime<Utc>), u32> =
+                            HashMap::new();
+
+                        let mut new_bookings: HashMap<u32, Booking> = HashMap::new();
+                        for (id, old) in old_bookings {
+                            let key = (old.user.clone(), old.start_time, old.end_time);
+                            let group_id =
+                                *groups.entry(key).or_insert_with(rand::random::<u32>);
+                            new_bookings.insert(
+                                id,
+                                Booking {
+                                    user: old.user,
+                                    resource_name: old.resource_name,
+                                    start_time: old.start_time,
+                                    end_time: old.end_time,
+                                    group_id,
+                                },
+                            );
+                        }
+
+                        let migrated = BookingsDb {
+                            version: 2,
+                            bookings: new_bookings,
+                        };
+
+                        let migrated_json = serde_json::to_string_pretty(&migrated)?;
+                        std::fs::write(&bookings_path, migrated_json)?;
+                        info!("Migration complete");
+                    }
+                }
+            }
+        }
+
+        let db = JsonDb::open(&bookings_path)
             .await
             .map_err(|e| anyhow!("Failed to open bookings database: {}", e))?;
         Ok(Self {
@@ -224,8 +302,8 @@ impl BookingApp {
         range_start: Option<DateTime<Utc>>,
         range_end: Option<DateTime<Utc>>,
     ) -> Result<Vec<Event>, serde_json::Error> {
-        let events = self.db.read(|bookings| {
-            bookings
+        let events = self.db.read(|db| {
+            db.bookings
                 .iter()
                 .filter(|(_, booking)| {
                     if let Some(start) = range_start {
@@ -246,6 +324,7 @@ impl BookingApp {
                         booking.user.room, self.resources[&booking.resource_name].name
                     ),
                     id,
+                    group_id: booking.group_id,
                     start: booking.start_time.to_rfc3339(),
                     end: booking.end_time.to_rfc3339(),
                     owner: booking.user.room,
@@ -357,8 +436,8 @@ impl BookingApp {
             }
         }
 
-        if self.db.read(|bookings| {
-            bookings.iter().any(|(&id, existing_booking)| {
+        if self.db.read(|db| {
+            db.bookings.iter().any(|(&id, existing_booking)| {
                 booking.resource_name == existing_booking.resource_name
                     && booking.start_time < existing_booking.end_time
                     && booking.end_time > existing_booking.start_time
@@ -383,8 +462,8 @@ impl BookingApp {
             }
             // 2: check that no more than 2 bookings are made in the future by the same user
             else {
-                let user_bookings = self.db.read(|bookings| {
-                    bookings
+                let user_bookings = self.db.read(|db| {
+                    db.bookings
                         .values()
                         .filter(|prior_booking| {
                             prior_booking.user == booking.user
@@ -426,6 +505,7 @@ impl BookingApp {
         let start_time = booking.start_time;
         let end_time = booking.end_time;
         let mut created_ids: Vec<u32> = Vec::new();
+        let group_id: u32 = rand::random();
 
         for resource_name in &booking.resource_names {
             // Check depends_on constraint
@@ -434,8 +514,8 @@ impl BookingApp {
                     // Parent must be in the same booking request OR already booked by same user at same time
                     let parent_in_request = booking.resource_names.contains(parent_id);
                     if !parent_in_request {
-                        let parent_booked = self.db.read(|bookings| {
-                            bookings.values().any(|b| {
+                        let parent_booked = self.db.read(|db| {
+                            db.bookings.values().any(|b| {
                                 b.resource_name == *parent_id
                                     && b.user == *user
                                     && b.start_time == start_time
@@ -464,6 +544,7 @@ impl BookingApp {
                 resource_name,
                 start_time,
                 end_time,
+                group_id,
             };
 
             if let Err(e) = self.check_available(None, &new_booking) {
@@ -474,7 +555,7 @@ impl BookingApp {
             }
 
             let mut id: u32 = rand::random();
-            while self.db.read(|bookings| bookings.contains_key(&id)) {
+            while self.db.read(|db| db.bookings.contains_key(&id)) {
                 id = rand::random();
             }
 
@@ -491,75 +572,79 @@ impl BookingApp {
         Ok("Booking successful".to_string())
     }
     pub async fn handle_delete(&mut self, payload: DeletePayload) -> Result<(), String> {
-        let id = payload.id;
+        let mut all_ids_to_delete: Vec<u32> = Vec::new();
 
-        if !self.db.read(|bookings| bookings.contains_key(&id)) {
-            return Err("Booking does not exist".to_string());
-        }
+        for id in &payload.ids {
+            if !self.db.read(|db| db.bookings.contains_key(id)) {
+                continue; // Skip already-deleted (e.g. cascaded by a previous item)
+            }
 
-        //dont allow deletion of past bookings
-        if self
-            .db
-            .read(|bookings| bookings[&id].start_time < Utc::now())
-        {
-            return Err("Booking is in the past".to_string());
-        }
+            if self.db.read(|db| db.bookings[id].start_time < Utc::now()) {
+                return Err("Cannot delete a booking in the past".to_string());
+            }
 
-        // Find dependent bookings to cascade delete
-        let booking_info = self.db.read(|bookings| {
-            let b = &bookings[&id];
-            (b.resource_name.clone(), b.user.clone(), b.start_time, b.end_time)
-        });
-        let (resource_name, user, start_time, end_time) = booking_info;
+            // Find dependent bookings to cascade delete
+            let booking_info = self.db.read(|db| {
+                let b = &db.bookings[id];
+                (b.resource_name.clone(), b.user.clone(), b.start_time, b.end_time)
+            });
+            let (resource_name, user, start_time, end_time) = booking_info;
 
-        // Find child resources that depend on this resource
-        let dependent_resource_ids: Vec<String> = self
-            .resources
-            .iter()
-            .filter(|(_, r)| r.depends_on.as_deref() == Some(resource_name.as_str()))
-            .map(|(id, _)| id.to_string())
-            .collect();
-
-        // Find and delete dependent bookings by same user at same time
-        let dependent_booking_ids: Vec<u32> = self.db.read(|bookings| {
-            bookings
+            let dependent_resource_ids: Vec<String> = self
+                .resources
                 .iter()
-                .filter(|(_, b)| {
-                    dependent_resource_ids.contains(&b.resource_name)
-                        && b.user == user
-                        && b.start_time == start_time
-                        && b.end_time == end_time
-                })
-                .map(|(id, _)| *id)
-                .collect()
-        });
+                .filter(|(_, r)| r.depends_on.as_deref() == Some(resource_name.as_str()))
+                .map(|(rid, _)| rid.to_string())
+                .collect();
+
+            let dependent_booking_ids: Vec<u32> = self.db.read(|db| {
+                db.bookings
+                    .iter()
+                    .filter(|(_, b)| {
+                        dependent_resource_ids.contains(&b.resource_name)
+                            && b.user == user
+                            && b.start_time == start_time
+                            && b.end_time == end_time
+                    })
+                    .map(|(bid, _)| *bid)
+                    .collect()
+            });
+
+            if !all_ids_to_delete.contains(id) {
+                all_ids_to_delete.push(*id);
+            }
+            for dep_id in dependent_booking_ids {
+                if !all_ids_to_delete.contains(&dep_id) {
+                    all_ids_to_delete.push(dep_id);
+                }
+            }
+        }
 
         self.db
-            .update(|bookings| bookings.remove(&id))
+            .update(|db| {
+                for id in &all_ids_to_delete {
+                    db.bookings.remove(id);
+                }
+            })
             .await
-            .map_err(|e| format!("Error deleting booking: {}", e))?;
-
-        for dep_id in dependent_booking_ids {
-            let _ = self.db.update(|bookings| bookings.remove(&dep_id)).await;
-        }
+            .map_err(|e| format!("Error deleting bookings: {}", e))?;
 
         Ok(())
     }
 
-    pub fn assert_id(&self, id: &u32, user: &User) -> bool {
-        self.db.read(|bookings| {
-            if let Some(booking) = bookings.get(id) {
-                return booking.user == *user;
-            }
-            false
+    pub fn assert_ids(&self, ids: &[u32], user: &User) -> bool {
+        self.db.read(|db| {
+            ids.iter().all(|id| {
+                db.bookings.get(id).is_some_and(|b| b.user == *user)
+            })
         })
     }
 
     async fn add_booking(&mut self, id: &u32, booking: Booking) -> Result<(), String> {
         debug!("Adding booking: {:?}", booking);
         self.db
-            .update(|bookings| {
-                bookings.insert(*id, booking);
+            .update(|db| {
+                db.bookings.insert(*id, booking);
             })
             .await
             .map_err(|e| format!("Error adding booking: {}", e))?;
@@ -567,13 +652,13 @@ impl BookingApp {
     }
 
     async fn delete_booking(&mut self, id: &u32) -> Result<(), String> {
-        if !self.db.read(|bookings| bookings.contains_key(id)) {
+        if !self.db.read(|db| db.bookings.contains_key(id)) {
             return Err("Booking does not exist".to_string());
         }
 
         self.db
-            .update(|bookings| {
-                bookings.remove(id);
+            .update(|db| {
+                db.bookings.remove(id);
             })
             .await
             .map_err(|e| format!("Error deleting booking: {}", e))
@@ -583,26 +668,263 @@ impl BookingApp {
         &mut self,
         change_booking: ChangeBooking,
     ) -> Result<(), String> {
-        let id = change_booking.id;
+        for id in &change_booking.ids {
+            //check that booking exists
+            debug!("Checking if booking exists");
+            let mut booking = self.db.read(|db| {
+                db.bookings
+                    .get(id)
+                    .cloned()
+                    .ok_or("Booking does not exist".to_string())
+            })?;
 
-        //check that booking exists
-        debug!("Checking if booking exists");
-        let mut booking = self.db.read(|bookings| {
-            bookings
-                .get(&id)
-                .cloned()
-                .ok_or("Booking does not exist".to_string())
-        })?;
+            booking.start_time = change_booking.start_time;
+            booking.end_time = change_booking.end_time;
 
-        booking.start_time = change_booking.start_time;
-        booking.end_time = change_booking.end_time;
+            //check that booking is within allowed times
+            debug!("Checking if booking is within allowed times");
+            self.check_available(Some(*id), &booking)?;
 
-        //check that booking is within allowed times
-        debug!("Checking if booking is within allowed times");
-        self.check_available(Some(id), &booking)?;
+            //update booking
+            debug!("Updating booking");
+            self.add_booking(id, booking).await?;
+        }
+        Ok(())
+    }
+}
 
-        //update booking
-        debug!("Updating booking");
-        self.add_booking(&id, booking).await
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    async fn setup_app() -> (BookingApp, TempDir) {
+        let dir = TempDir::new().unwrap();
+        let config_dir = dir.path().join("config");
+        std::fs::create_dir_all(&config_dir).unwrap();
+
+        let resources = r##"{
+            "sauna": { "name": "Sauna", "description": "", "max_duration": "10:00", "color": "#838800" },
+            "hottub": { "name": "Hot tub", "description": "", "max_duration": "10:00", "color": "#003ad9", "depends_on": "sauna" }
+        }"##;
+        std::fs::write(config_dir.join("resources.json"), resources).unwrap();
+        std::fs::write(config_dir.join("resource_periods.json"), "{}").unwrap();
+
+        let bookings_dir = dir.path().join("bookings");
+        std::fs::create_dir_all(&bookings_dir).unwrap();
+
+        let app = BookingApp::from_config(
+            config_dir.to_str().unwrap(),
+            bookings_dir.to_str().unwrap(),
+        )
+        .await
+        .unwrap();
+
+        (app, dir)
+    }
+
+    fn test_user() -> User {
+        User {
+            username: "test".to_string(),
+            room: 101,
+        }
+    }
+
+    fn future_time(hours_from_now: i64) -> DateTime<Utc> {
+        Utc::now() + chrono::Duration::hours(hours_from_now)
+    }
+
+    #[tokio::test]
+    async fn test_new_booking_assigns_group_id() {
+        let (mut app, _dir) = setup_app().await;
+        let user = test_user();
+
+        let booking = NewBooking {
+            resource_names: vec!["sauna".to_string(), "hottub".to_string()],
+            start_time: future_time(1),
+            end_time: future_time(3),
+        };
+
+        app.handle_new_booking(booking, &user).await.unwrap();
+
+        let bookings: Vec<Booking> = app.db.read(|db| db.bookings.values().cloned().collect());
+        assert_eq!(bookings.len(), 2);
+        assert_eq!(bookings[0].group_id, bookings[1].group_id);
+    }
+
+    #[tokio::test]
+    async fn test_separate_bookings_get_different_group_ids() {
+        let (mut app, _dir) = setup_app().await;
+        let user = test_user();
+
+        let booking1 = NewBooking {
+            resource_names: vec!["sauna".to_string()],
+            start_time: future_time(1),
+            end_time: future_time(3),
+        };
+        let booking2 = NewBooking {
+            resource_names: vec!["sauna".to_string()],
+            start_time: future_time(5),
+            end_time: future_time(7),
+        };
+
+        app.handle_new_booking(booking1, &user).await.unwrap();
+        app.handle_new_booking(booking2, &user).await.unwrap();
+
+        let bookings: Vec<Booking> = app.db.read(|db| db.bookings.values().cloned().collect());
+        assert_eq!(bookings.len(), 2);
+        assert_ne!(bookings[0].group_id, bookings[1].group_id);
+    }
+
+    #[tokio::test]
+    async fn test_bulk_delete() {
+        let (mut app, _dir) = setup_app().await;
+        let user = test_user();
+
+        let booking = NewBooking {
+            resource_names: vec!["sauna".to_string(), "hottub".to_string()],
+            start_time: future_time(1),
+            end_time: future_time(3),
+        };
+        app.handle_new_booking(booking, &user).await.unwrap();
+
+        let ids: Vec<u32> = app.db.read(|db| db.bookings.keys().copied().collect());
+        assert_eq!(ids.len(), 2);
+
+        app.handle_delete(DeletePayload { ids }).await.unwrap();
+
+        let remaining = app.db.read(|db| db.bookings.len());
+        assert_eq!(remaining, 0);
+    }
+
+    #[tokio::test]
+    async fn test_bulk_delete_cascades_dependents() {
+        let (mut app, _dir) = setup_app().await;
+        let user = test_user();
+
+        let booking = NewBooking {
+            resource_names: vec!["sauna".to_string(), "hottub".to_string()],
+            start_time: future_time(1),
+            end_time: future_time(3),
+        };
+        app.handle_new_booking(booking, &user).await.unwrap();
+
+        // Only delete sauna — hottub should cascade
+        let sauna_id = app.db.read(|db| {
+            db.bookings
+                .iter()
+                .find(|(_, b)| b.resource_name == "sauna")
+                .map(|(id, _)| *id)
+                .unwrap()
+        });
+
+        app.handle_delete(DeletePayload {
+            ids: vec![sauna_id],
+        })
+        .await
+        .unwrap();
+
+        let remaining = app.db.read(|db| db.bookings.len());
+        assert_eq!(remaining, 0);
+    }
+
+    #[tokio::test]
+    async fn test_bulk_change() {
+        let (mut app, _dir) = setup_app().await;
+        let user = test_user();
+
+        let booking = NewBooking {
+            resource_names: vec!["sauna".to_string(), "hottub".to_string()],
+            start_time: future_time(1),
+            end_time: future_time(3),
+        };
+        app.handle_new_booking(booking, &user).await.unwrap();
+
+        let ids: Vec<u32> = app.db.read(|db| db.bookings.keys().copied().collect());
+        let new_start = future_time(10);
+        let new_end = future_time(12);
+
+        app.handle_change_booking(ChangeBooking {
+            ids,
+            start_time: new_start,
+            end_time: new_end,
+        })
+        .await
+        .unwrap();
+
+        let bookings: Vec<Booking> = app.db.read(|db| db.bookings.values().cloned().collect());
+        for b in &bookings {
+            assert_eq!(b.start_time, new_start);
+            assert_eq!(b.end_time, new_end);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_migration_from_v1() {
+        let dir = TempDir::new().unwrap();
+        let config_dir = dir.path().join("config");
+        std::fs::create_dir_all(&config_dir).unwrap();
+
+        let resources = r##"{
+            "sauna": { "name": "Sauna", "description": "", "max_duration": "10:00", "color": "#838800" }
+        }"##;
+        std::fs::write(config_dir.join("resources.json"), resources).unwrap();
+        std::fs::write(config_dir.join("resource_periods.json"), "{}").unwrap();
+
+        let bookings_dir = dir.path().join("bookings");
+        std::fs::create_dir_all(&bookings_dir).unwrap();
+
+        // Write old format (no group_id, raw HashMap)
+        let old_data = r#"{
+            "1": { "user": { "username": "alice", "room": 101 }, "resource_name": "sauna", "start_time": "2026-06-01T10:00:00Z", "end_time": "2026-06-01T12:00:00Z" },
+            "2": { "user": { "username": "alice", "room": 101 }, "resource_name": "sauna", "start_time": "2026-06-01T10:00:00Z", "end_time": "2026-06-01T12:00:00Z" },
+            "3": { "user": { "username": "bob", "room": 202 }, "resource_name": "sauna", "start_time": "2026-06-01T10:00:00Z", "end_time": "2026-06-01T12:00:00Z" }
+        }"#;
+        std::fs::write(bookings_dir.join("bookings.json"), old_data).unwrap();
+
+        let app = BookingApp::from_config(
+            config_dir.to_str().unwrap(),
+            bookings_dir.to_str().unwrap(),
+        )
+        .await
+        .unwrap();
+
+        let bookings: Vec<(u32, Booking)> =
+            app.db.read(|db| db.bookings.iter().map(|(k, v)| (*k, v.clone())).collect());
+
+        assert_eq!(bookings.len(), 3);
+
+        let b1 = bookings.iter().find(|(id, _)| *id == 1).unwrap();
+        let b2 = bookings.iter().find(|(id, _)| *id == 2).unwrap();
+        let b3 = bookings.iter().find(|(id, _)| *id == 3).unwrap();
+
+        // Same user + same time = same group_id
+        assert_eq!(b1.1.group_id, b2.1.group_id);
+        // Different user = different group_id
+        assert_ne!(b1.1.group_id, b3.1.group_id);
+
+        let version = app.db.read(|db| db.version);
+        assert_eq!(version, 2);
+    }
+
+    #[tokio::test]
+    async fn test_assert_ids_rejects_non_owner() {
+        let (mut app, _dir) = setup_app().await;
+        let user = test_user();
+        let other_user = User {
+            username: "other".to_string(),
+            room: 202,
+        };
+
+        let booking = NewBooking {
+            resource_names: vec!["sauna".to_string()],
+            start_time: future_time(1),
+            end_time: future_time(3),
+        };
+        app.handle_new_booking(booking, &user).await.unwrap();
+
+        let ids: Vec<u32> = app.db.read(|db| db.bookings.keys().copied().collect());
+        assert!(app.assert_ids(&ids, &user));
+        assert!(!app.assert_ids(&ids, &other_user));
     }
 }

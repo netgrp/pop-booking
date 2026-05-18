@@ -287,7 +287,7 @@ function reschedule(start_str, end_str, id) {
   sendPostRequest("/api/book/secure/change", {
     start_time: start,
     end_time: end,
-    id: parseInt(id, 10),
+    ids: [parseInt(id, 10)],
   }).then((response) => {
     if (response.ok) {
       Toast.fire({
@@ -671,7 +671,7 @@ async function handle_event_click(info) {
       } else if (result.isDenied) {
 
         sendPostRequest("/api/book/secure/delete", {
-          id: parseInt(info.event.id, 10),
+          ids: [parseInt(info.event.id, 10)],
         }).then((response) => {
           if (response.ok) {
             Toast.fire('Success', 'Booking deleted successfully', 'success');

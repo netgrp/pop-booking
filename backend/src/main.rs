@@ -93,10 +93,10 @@ async fn handle_change_booking(
     })?;
 
     //check that the user is allowed to change the booking
-    if !booker.read().await.assert_id(&payload.id, &user) {
+    if !booker.read().await.assert_ids(&payload.ids, &user) {
         return Err((
             StatusCode::FORBIDDEN,
-            "You are not allowed to delete this booking".to_string(),
+            "You are not allowed to change one or more of these bookings".to_string(),
         ));
     }
 
@@ -114,7 +114,7 @@ async fn handle_delete(
     headers: HeaderMap,
     Json(payload): Json<DeletePayload>,
 ) -> Result<(StatusCode, String), (StatusCode, String)> {
-    debug!("Deleting booking: {:?}", payload);
+    debug!("Deleting bookings: {:?}", payload);
 
     let user = serde_json::from_slice(
         headers
@@ -127,18 +127,18 @@ async fn handle_delete(
         (StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
     })?;
 
-    //check that the user is allowed to delete the booking
-    if !booker.read().await.assert_id(&payload.id, &user) {
+    //check that the user is allowed to delete the bookings
+    if !booker.read().await.assert_ids(&payload.ids, &user) {
         return Err((
             StatusCode::FORBIDDEN,
-            "You are not allowed to delete this booking".to_string(),
+            "You are not allowed to delete one or more of these bookings".to_string(),
         ));
     }
 
     match booker.write().await.handle_delete(payload).await {
-        Ok(()) => Ok((StatusCode::OK, "Booking deleted".to_string())),
+        Ok(()) => Ok((StatusCode::OK, "Bookings deleted".to_string())),
         Err(e) => {
-            error!("Error deleting booking: {}", e);
+            error!("Error deleting bookings: {}", e);
             Err((StatusCode::INTERNAL_SERVER_ERROR, e))
         }
     }
