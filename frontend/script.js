@@ -759,6 +759,7 @@ async function getResources(start, end) {
 
     resourceNames.push({ id: key, text: value.name, depends_on: value.depends_on || null });
   }
+  resourceNames.sort((a, b) => a.text.localeCompare(b.text));
   return resourceNames;
 }
 

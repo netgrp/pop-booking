@@ -747,7 +747,7 @@
         if (isInRange(period.start, period.end, [month, day])) return false;
       }
       return true;
-    });
+    }).sort(([, a], [, b]) => a.name.localeCompare(b.name));
   }
 
   function isInRange(start, end, target) {
