@@ -575,20 +575,20 @@ impl BookingApp {
         let mut all_ids_to_delete: Vec<u32> = Vec::new();
 
         for id in &payload.ids {
-            if !self.db.read(|db| db.bookings.contains_key(id)) {
-                continue; // Skip already-deleted (e.g. cascaded by a previous item)
-            }
+            // Single read to check existence, past-booking, and extract info
+            let booking_info = self.db.read(|db| {
+                db.bookings.get(id).map(|b| {
+                    (b.start_time < Utc::now(), b.resource_name.clone(), b.user.clone(), b.start_time, b.end_time)
+                })
+            });
 
-            if self.db.read(|db| db.bookings[id].start_time < Utc::now()) {
+            let Some((is_past, resource_name, user, start_time, end_time)) = booking_info else {
+                continue; // Skip already-deleted (e.g. cascaded by a previous item)
+            };
+
+            if is_past {
                 return Err("Cannot delete a booking in the past".to_string());
             }
-
-            // Find dependent bookings to cascade delete
-            let booking_info = self.db.read(|db| {
-                let b = &db.bookings[id];
-                (b.resource_name.clone(), b.user.clone(), b.start_time, b.end_time)
-            });
-            let (resource_name, user, start_time, end_time) = booking_info;
 
             let dependent_resource_ids: Vec<String> = self
                 .resources
