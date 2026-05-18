@@ -3,4 +3,4 @@ frontend/.prettierrc
 db/bookings.json
 target
 .env
-dist/
+/dist/
