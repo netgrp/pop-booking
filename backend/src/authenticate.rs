@@ -7,7 +7,7 @@ use axum_extra::extract::{
 use base64::prelude::*;
 use chrono::{DateTime, Utc};
 use rand::{RngCore, SeedableRng};
-use reqwest::StatusCode;
+use reqwest::{header::{HeaderValue, AUTHORIZATION}, StatusCode};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use sha1::{Digest, Sha1};
@@ -106,8 +106,7 @@ pub struct AuthApp {
     timeouts: HashMap<String, (DateTime<Utc>, u16)>,
     client: reqwest::Client,
     hasher: Sha1,
-    knet_username: String,
-    knet_password: String,
+    knet_api_token: String,
     knet_api_base_url: String,
 }
 
@@ -147,7 +146,7 @@ where
 }
 
 impl AuthApp {
-    pub fn new(base_url: String, username: String, password: String) -> Result<AuthApp> {
+    pub fn new(base_url: String, token: String) -> Result<AuthApp> {
         let client = reqwest::Client::new();
         let hasher = Sha1::new();
 
@@ -157,8 +156,7 @@ impl AuthApp {
             client,
             hasher,
             knet_api_base_url: base_url,
-            knet_username: username,
-            knet_password: password,
+            knet_api_token: token,
         })
     }
 
@@ -250,6 +248,12 @@ impl AuthApp {
             }
         }
 
+        let mut auth_header =
+            HeaderValue::try_from(format!("Token {}", self.knet_api_token))
+                .map_err(|_| "K-Net API token contains invalid header characters")?;
+
+        auth_header.set_sensitive(true);
+
         let user_result = 'login_block: {
             let url = format!(
                 "{}network/user/?username={}",
@@ -259,7 +263,7 @@ impl AuthApp {
             let response = self
                 .client
                 .get(&url)
-                .basic_auth(&self.knet_username, Some(&self.knet_password))
+                .header(AUTHORIZATION, auth_header.clone())
                 .send()
                 .await
                 .map_err(|_| "Failed to send request")?;
@@ -339,7 +343,7 @@ impl AuthApp {
         let vlan_response = self
             .client
             .get(vlan_url)
-            .basic_auth(&self.knet_username, Some(&self.knet_password))
+            .header(AUTHORIZATION, auth_header)
             .send()
             .await
             .map_err(|_| "Failed to send request")?;
