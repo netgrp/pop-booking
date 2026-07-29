@@ -344,8 +344,7 @@ async fn main() -> Result<()> {
 
     let auth_app = Arc::new(RwLock::new(AuthApp::new(
         env::var("KNET_API_BASE_URL")?,
-        env::var("KNET_API_USERNAME")?,
-        env::var("KNET_API_PASSWORD")?,
+        env::var("KNET_API_TOKEN")?,
     )?));
     let cleaner = auth_app.clone();
 
